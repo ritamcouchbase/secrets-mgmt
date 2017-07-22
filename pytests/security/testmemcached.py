@@ -113,3 +113,25 @@ class TestSDK():
         except Exception as e:
             log.info("Exception is from get_xattr function {0}".format(e))
             return False
+    
+    def write_data(self, sdk_conn):
+        try:
+            prefix = "testsdk-"
+            number_of_items = 10
+            keys = ["{0}-{1}".format(prefix, i) for i in range(0, number_of_items)]
+            for k in keys:
+                sdk_conn.upsert(k, {str((k + "body"))})
+            return True
+        except Exception as e:
+            log.info( "Exception is from write_data function {0}".format(e))
+            return False
+
+    def read_data(self,client_ip, sdk_conn, bucket_name):
+        try:
+            mc, status = self.connection(client_ip, bucket_name, 'Administrator', 'password')
+            self.write_data(mc)
+            test = sdk_conn.get("testsdk--0").value
+            return True
+        except Exception as e:
+            log.info( "Exception is from read_data function {0}".format(e))
+            return False
