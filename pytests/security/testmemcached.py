@@ -120,7 +120,7 @@ class TestSDK():
             number_of_items = 10
             keys = ["{0}-{1}".format(prefix, i) for i in range(0, number_of_items)]
             for k in keys:
-                sdk_conn.upsert(k, {str((k + "body"))})
+                sdk_conn.upsert(k, {'name': str(k + "SDK Insert")})
             return True
         except Exception as e:
             log.info( "Exception is from write_data function {0}".format(e))
