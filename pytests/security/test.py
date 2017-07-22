@@ -14,7 +14,7 @@ from basetestcase import BaseTestCase
 from testmemcached import TestSDK
 
 
-class rbac_upgrade(UpgradeTests):
+class rbac_upgrade(BaseTestCase):
 
     def setUp(self):
         super(rbac_upgrade, self).setUp()
@@ -179,7 +179,7 @@ class rbac_upgrade(UpgradeTests):
                                   {'id': 'afterupgrade02', 'name': 'afterupgrade02', 'password': 'p@ssword'}, \
                                   ]
 
-        #RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
+        RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
 
         self.post_upgrade_user_role = [{'id': 'post_admin', 'name': 'post_admin', 'roles': 'admin',
                                         'action_list': 'admin', 'bucket': 'afterupgrade01', 'admin': 'yes'}, \
@@ -237,7 +237,7 @@ class rbac_upgrade(UpgradeTests):
                                         'action_list': 'data_monitoring', 'bucket': 'afterupgrade02'}
                                        ]
 
-        #RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
+        RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
 
     def change_pass_new_user(self):
         rest = RestConnection(self.master)
@@ -535,10 +535,10 @@ class rbac_upgrade(UpgradeTests):
 
 
     def upgrade_all_nodes(self):
-        self.pre_upgrade()
-        self.setup_4_5_users()
-        self.online_upgrade()
-        self.check_cluster_compatiblity(self.master)
+        #self.pre_upgrade()
+        #self.setup_4_5_users()
+        #self.online_upgrade()
+        #self.check_cluster_compatiblity(self.master)
         self.post_upgrade()
 
 
