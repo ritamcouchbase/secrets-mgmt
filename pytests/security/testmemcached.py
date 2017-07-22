@@ -3,13 +3,12 @@ import logger
 log = logger.Logger.get_logger()
 from couchbase.bucket import Bucket
 import couchbase.subdocument as SD
+import time
 
 
 class TestMemcachedClient():
 
     def connection(self, client_ip, bucket_name, user,password, port=11210):
-        log.info("Bucket name for connection is ---- {0}, username -- {1}, ----- password -- {2}".format(bucket_name,user, \
-                                                                                                         password))
         try:
             mc = MemcachedClient(host=client_ip, port=port)
             mc.sasl_auth_plain(user,password)
@@ -19,8 +18,9 @@ class TestMemcachedClient():
             log.info( "Exception is from connection function {0}".format(e))
             return False, False
 
-    def write_data(self,mc):
+    def write_data(self,client_ip, bucket_name, user_name, password):
         try:
+            mc, error = self.connection(client_ip, bucket_name,user_name,password=password)
             prefix = "test-"
             number_of_items = 10
             keys = ["{0}-{1}".format(prefix, i) for i in range(0, number_of_items)]
@@ -31,28 +31,30 @@ class TestMemcachedClient():
             log.info( "Exception is from write_data function {0}".format(e))
             return False
 
-    def read_data(self,client_ip, mc,bucket_name):
+    def read_data(self,client_ip, bucket_name, user_name, password):
         try:
-            mc_temp, status = self.connection(client_ip, bucket_name,'Administrator','password')
-            self.write_data(mc_temp)
+            mc, status = self.connection(client_ip, bucket_name, user_name, password=password)
+            self.write_data(client_ip, bucket_name,'Administrator','password')
             test = mc.get("test--0")
             return True
         except Exception as e:
             log.info( "Exception is from read_data function {0}".format(e))
             return False
 
-    def read_stats(self, mc):
+    def read_stats(self, client_ip, bucket_name, user_name, password):
         try:
+            mc, status = self.connection(client_ip, bucket_name, user_name, password=password)
             test = mc.stats('warmup')
             return True
         except Exception as e:
             log.info( "Exception is {0}".format(e))
             return False
 
-    def get_meta(self, client_ip, mc, bucket_name):
+    def get_meta(self, client_ip, bucket_name, user_name, password):
         try:
-            mc_temp, status = self.connection(client_ip, bucket_name, 'Administrator', 'password')
-            self.write_data(mc_temp)
+            self.write_data(client_ip, bucket_name, 'Administrator', 'password')
+            time.sleep(5)
+            mc , status = self.connection(client_ip, bucket_name, user_name, password)
             test = mc.getMeta("test--0")
             return True
         except Exception as e:
@@ -60,13 +62,14 @@ class TestMemcachedClient():
             return False
 
 
-    def set_meta(self, client_ip, mc, bucket_name):
+    def set_meta(self, client_ip, bucket_name, user_name, password):
         try:
             mc_temp, status = self.connection(client_ip, bucket_name, 'Administrator', 'password')
-            self.write_data(mc_temp)
+            self.write_data(client_ip, bucket_name, 'Administrator', 'password')
             rc = mc_temp.getMeta("test--0")
             cas = rc[4] + 1
             rev_seqno = rc[3]
+            mc, status = self.connection(client_ip, bucket_name, user_name, password)
             set_with_meta_resp = mc.setWithMeta("test--0", '123456789', 0, 0, 123, cas)
             return True
         except Exception as e:
