@@ -276,11 +276,12 @@ class rbac_upgrade(BaseTestCase):
                     elif temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
                     #self.log.info("Result of action - {0} is {1}".format(action, result_action))                    '''
-                    if temp_action[1] == 'False':
-                        self.assertFalse(result_action)
+                    if temp_action[1] == str(result_action):
+                        self.assertTrue(True)
                     else:
-                        self.assertTrue(result_action)
-
+                        self.log.info("Result of action - {0} is {1} -- {2}".format(action, result_action, temp_action[1]))
+                        self.assertFalse(True)
+                    
     def createBulkDocuments(self,bucket,password=None,start_num=0,end_num=10000,input_key='demo_key'):
         if password is not None:
             result, client = self._sdk_connection(bucket, host_ip=self.host_ip, password=password)
