@@ -262,20 +262,18 @@ class rbac_upgrade(BaseTestCase):
                     self.sleep(1)
                     result_action = None
                     if temp_action[0] == 'write':
-                        result_action = TestMemcachedClient().write_data(master_ip, bucket_name, user['id'], user['password'] )
+                        result_action = TestSDK().write_data(sdk_conn)
                     elif temp_action[0] == 'read':
-                        result_action = TestMemcachedClient().read_data(master_ip, bucket_name, user['id'], user['password'])
-                    '''
-                    elif temp_action[0] == 'statsRead':
-                        result_action = TestMemcachedClient().read_stats(master_ip, bucket_name, user['id'], user['password'])
-                    elif temp_action[0] == 'ReadMeta':
-                        result_action = TestMemcachedClient().get_meta(master_ip, bucket_name, user['id'], user['password'])
-                    '''
+                        result_action = TestSDK().get_xattr(self.master.ip, sdk_conn, bucket_name)
                     elif temp_action[0] == 'WriteXattr':
                         result_action = TestSDK().set_xattr(sdk_conn)
                     elif temp_action[0] == 'ReadXattr':
                         result_action = TestSDK().get_xattr(self.master.ip, sdk_conn, bucket_name)
                     '''
+                    elif temp_action[0] == 'statsRead':
+                        result_action = TestMemcachedClient().read_stats(master_ip, bucket_name, user['id'], user['password'])
+                    elif temp_action[0] == 'ReadMeta':
+                        result_action = TestMemcachedClient().get_meta(master_ip, bucket_name, user['id'], user['password'])
                     if bucket_name in ['beforeupgadesasl','beforeupgadesimple'] and temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
                     else:
