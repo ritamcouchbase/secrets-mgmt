@@ -14,7 +14,7 @@ from basetestcase import BaseTestCase
 from testmemcached import TestSDK
 
 
-class rbac_upgrade(BaseTestCase):
+class rbac_upgrade(UpgradeTests):
 
     def setUp(self):
         super(rbac_upgrade, self).setUp()
@@ -439,7 +439,7 @@ class rbac_upgrade(BaseTestCase):
 
 
         #1. Create new bucket and new users in the system
-        #self.post_upgrade_buckets()
+        self.post_upgrade_buckets()
         self.post_upgrade_new_users_new_bucket()
         current_roles = RestConnection(self.master).retrieve_user_roles()
         self.check_roles(self.post_upgrade_user_role, current_roles)
@@ -449,9 +449,9 @@ class rbac_upgrade(BaseTestCase):
         self.check_sdk_connection_post_upgrade()
         self.sleep(10)
 
-        #self.log.info("-------------------- REBALANCE TO HAVE 1 NODE IN CLUSTER -----------------------------")
-        #self.cluster.rebalance(self.servers[:len(self.servers)], [], self.servers[1:self.num_servers])
-        #self.sleep(120)
+        self.log.info("-------------------- REBALANCE TO HAVE 1 NODE IN CLUSTER -----------------------------")
+        self.cluster.rebalance(self.servers[:len(self.servers)], [], self.servers[1:self.num_servers])
+        self.sleep(120)
 
         #3 check memcached for new users
         self.log.info("-------------------- CHECK MEMCACHED FOR NEW USERS -----------------------------")
@@ -527,10 +527,10 @@ class rbac_upgrade(BaseTestCase):
 
 
     def upgrade_all_nodes(self):
-        #self.pre_upgrade()
-        #self.setup_4_5_users()
-        #self.online_upgrade()
-        #self.check_cluster_compatiblity(self.master)
+        self.pre_upgrade()
+        self.setup_4_5_users()
+        self.online_upgrade()
+        self.check_cluster_compatiblity(self.master)
         self.post_upgrade()
 
 
