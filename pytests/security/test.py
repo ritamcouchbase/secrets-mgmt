@@ -346,7 +346,7 @@ class rbac_upgrade(UpgradeTests):
             print ex
 
     def _sdk_connection(self, bucket='default', host_ip=None, password=None):
-        self.sleep(5)
+        self.sleep(30)
         result = False
         host_ip = ','.join(host_ip)
         connection_string = 'couchbase://' + host_ip + '/' + bucket
