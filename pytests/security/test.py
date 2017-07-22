@@ -275,7 +275,6 @@ class rbac_upgrade(BaseTestCase):
                         result_action = temp_action[1]
                     elif temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
-                    '''
                     #self.log.info("Result of action - {0} is {1}".format(action, result_action))
                     if temp_action[1] == str(result_action):
                         self.assertTrue(True)
