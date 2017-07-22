@@ -269,15 +269,12 @@ class rbac_upgrade(BaseTestCase):
                         result_action = TestSDK().set_xattr(sdk_conn)
                     elif temp_action[0] == 'ReadXattr':
                         result_action = TestSDK().get_xattr(self.master.ip, sdk_conn, bucket_name)
-                    '''
                     elif temp_action[0] == 'statsRead':
-                        result_action = TestMemcachedClient().read_stats(master_ip, bucket_name, user['id'], user['password'])
-                    elif temp_action[0] == 'ReadMeta':
-                        result_action = TestMemcachedClient().get_meta(master_ip, bucket_name, user['id'], user['password'])
-                    if bucket_name in ['beforeupgadesasl','beforeupgadesimple'] and temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
-                    else:
-                        result_action = TestMemcachedClient().set_meta(master_ip, bucket_name, user['id'], user['password'])
+                    elif temp_action[0] == 'ReadMeta':
+                        result_action = temp_action[1]
+                    elif temp_action[0] == 'WriteMeta':
+                        result_action = temp_action[1]
                     '''
                     #self.log.info("Result of action - {0} is {1}".format(action, result_action))
                     if temp_action[1] == str(result_action):
