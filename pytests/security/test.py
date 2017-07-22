@@ -265,18 +265,22 @@ class rbac_upgrade(BaseTestCase):
                         result_action = TestMemcachedClient().write_data(master_ip, bucket_name, user['id'], user['password'] )
                     elif temp_action[0] == 'read':
                         result_action = TestMemcachedClient().read_data(master_ip, bucket_name, user['id'], user['password'])
+                    '''
                     elif temp_action[0] == 'statsRead':
                         result_action = TestMemcachedClient().read_stats(master_ip, bucket_name, user['id'], user['password'])
                     elif temp_action[0] == 'ReadMeta':
                         result_action = TestMemcachedClient().get_meta(master_ip, bucket_name, user['id'], user['password'])
+                    '''
                     elif temp_action[0] == 'WriteXattr':
                         result_action = TestSDK().set_xattr(sdk_conn)
                     elif temp_action[0] == 'ReadXattr':
                         result_action = TestSDK().get_xattr(self.master.ip, sdk_conn, bucket_name)
+                    '''
                     if bucket_name in ['beforeupgadesasl','beforeupgadesimple'] and temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
                     else:
                         result_action = TestMemcachedClient().set_meta(master_ip, bucket_name, user['id'], user['password'])
+                    '''
                     #self.log.info("Result of action - {0} is {1}".format(action, result_action))
                     if temp_action[1] == str(result_action):
                         self.assertTrue(True)
@@ -448,14 +452,14 @@ class rbac_upgrade(BaseTestCase):
 
         #1. Create new bucket and new users in the system
         #self.post_upgrade_buckets()
-        #self.post_upgrade_new_users_new_bucket()
+        self.post_upgrade_new_users_new_bucket()
         current_roles = RestConnection(self.master).retrieve_user_roles()
-        #self.check_roles(self.post_upgrade_user_role, current_roles)
+        self.check_roles(self.post_upgrade_user_role, current_roles)
 
         #2 Check for SDK connections post upgrade
-        #self.log.info ("-------------------- CHECK SDK CONNNECIONS POST UPGRADE USERS -----------------------------")
-        #self.check_sdk_connection_post_upgrade()
-        #self.sleep(10)
+        self.log.info ("-------------------- CHECK SDK CONNNECIONS POST UPGRADE USERS -----------------------------")
+        self.check_sdk_connection_post_upgrade()
+        self.sleep(10)
 
         #self.log.info("-------------------- REBALANCE TO HAVE 1 NODE IN CLUSTER -----------------------------")
         #self.cluster.rebalance(self.servers[:len(self.servers)], [], self.servers[1:self.num_servers])
@@ -473,6 +477,7 @@ class rbac_upgrade(BaseTestCase):
             self.check_roles(self.pre_upgrade_user_role, current_roles)
             self.sleep(30)
         #5 Change roles for pre-upgrade users
+        '''
             self.log.info("-------------------- CHANGE ROLES OLD USERS -----------------------------")
             user_list, role_list = self.change_role_pre_upg_data()
             self.sleep(30)
@@ -491,6 +496,7 @@ class rbac_upgrade(BaseTestCase):
         self.test_memcached_connection(self.master.ip, user_list, role_list)
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
         self.check_sdk_connection_post_upgrade(pass_updated=True)
+        '''
 
 
 
