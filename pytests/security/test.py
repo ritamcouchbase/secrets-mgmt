@@ -275,18 +275,11 @@ class rbac_upgrade(BaseTestCase):
                         result_action = temp_action[1]
                     elif temp_action[0] == 'WriteMeta':
                         result_action = temp_action[1]
-                    #self.log.info("Result of action - {0} is {1}".format(action, result_action))
-                    if temp_action[1] == str(result_action):
-                        self.assertTrue(True)
-                    else:
-                        self.log.info("Result of action - {0} is {1} -- {2}".format(action, result_action, temp_action[1]))
-                    '''
+                    #self.log.info("Result of action - {0} is {1}".format(action, result_action))                    '''
                     if temp_action[1] == 'False':
                         self.assertFalse(result_action)
                     else:
                         self.assertTrue(result_action)
-                    '''
-
 
     def createBulkDocuments(self,bucket,password=None,start_num=0,end_num=10000,input_key='demo_key'):
         if password is not None:
@@ -352,7 +345,7 @@ class rbac_upgrade(BaseTestCase):
             print ex
 
     def _sdk_connection(self, bucket='default', host_ip=None, password=None):
-        self.sleep(30)
+        self.sleep(5)
         result = False
         host_ip = ','.join(host_ip)
         connection_string = 'couchbase://' + host_ip + '/' + bucket
@@ -471,7 +464,6 @@ class rbac_upgrade(BaseTestCase):
             self.check_roles(self.pre_upgrade_user_role, current_roles)
             self.sleep(30)
         #5 Change roles for pre-upgrade users
-        '''
             self.log.info("-------------------- CHANGE ROLES OLD USERS -----------------------------")
             user_list, role_list = self.change_role_pre_upg_data()
             self.sleep(30)
@@ -489,8 +481,7 @@ class rbac_upgrade(BaseTestCase):
         self.log.info("-------------------- CHECK MEMCACHED FOR UPGRADED BUCKET USERS -----------------------------")
         self.test_memcached_connection(self.master.ip, user_list, role_list)
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
-        self.check_sdk_connection_post_upgrade(pass_updated=True)
-        '''
+        self.check_sdk_connection_post_upgrade(pass_updated=True)   
 
 
 
