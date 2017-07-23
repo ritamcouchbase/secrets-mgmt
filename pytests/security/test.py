@@ -365,35 +365,39 @@ class rbac_upgrade(UpgradeTests):
             return result
 
     def pre_upgrade(self, offline=None):
+        thread_list = []
         rest = RestConnection(self.master)
         rest.create_bucket(bucket='beforeupgadesasl', ramQuotaMB=100, authType='sasl', saslPassword='p@ssword')
         rest.create_bucket(bucket='beforeupgadesimple', ramQuotaMB=100, proxyPort=11212)
-        rest.load_sample("travel-sample")
         self.create_ddocs_and_views()
         rest.set_indexer_storage_mode(storageMode="memory_optimized")
 
-        self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes', bucket='beforeupgadesimple')
-        self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
-                           bucket='beforeupgadesasl', password='p@ssword')
 
         create_docs_simple = Thread(name='create_docs_simple_bucket', target=self.createBulkDocuments, args=('beforeupgadesimple',None, 1, self.num_items))
         create_docs_sasl = Thread(name='create_docs_sasl_bucket', target=self.createBulkDocuments, args=('beforeupgadesasl', 'p@ssword', 1, self.num_items))
-
-        query_docs_simple = Thread(name='query_docs_simple_bucket', target=self.execute_query, args=(None, None, 'beforeupgadesimple', None,))
-        query_docs_sasl = Thread(name='query_docs_sasl_bucket', target=self.execute_query,
-                                            args=(None, None, 'beforeupgadesasl', None, ))
-
-
-        thread_list = []
         thread_list.append(create_docs_simple)
         thread_list.append(create_docs_sasl)
-        thread_list.append(query_docs_simple)
-        thread_list.append(query_docs_sasl)
+
+
+        if self.initial_version[0:4] != '3.1.5':
+            rest.load_sample("travel-sample")
+            self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
+                               bucket='beforeupgadesimple')
+            self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
+                               bucket='beforeupgadesasl', password='p@ssword')
+
+            query_docs_simple = Thread(name='query_docs_simple_bucket', target=self.execute_query, args=(None, None, 'beforeupgadesimple', None,))
+            query_docs_sasl = Thread(name='query_docs_sasl_bucket', target=self.execute_query,
+                                                args=(None, None, 'beforeupgadesasl', None, ))
+
+            thread_list.append(query_docs_simple)
+            thread_list.append(query_docs_sasl)
+
 
         for thread in thread_list:
             thread.start()
 
-        if offline is not None:
+        if offline == True:
             for thread in thread_list:
                 thread.join()
 
@@ -406,7 +410,7 @@ class rbac_upgrade(UpgradeTests):
         rest.create_bucket(bucket='afterupgrade01', ramQuotaMB=100, lww=True)
         rest.create_bucket(bucket='afterupgrade02', ramQuotaMB=100, lww=True)
 
-    def check_sdk_connection_post_upgrade(self, pass_updated=None):
+    def check_sdk_connection_post_upgrade(self, pass_updated=None, online=None):
         sdk_user_check = [
             {'id': 'afterupgrade01', 'name': 'afterupgrade01', 'password': 'p@ssword', "bucket_name":'afterupgrade01'}, \
             {'id': 'afterupgrade01', 'name': 'afterupgrade02', 'password': 'p@ssword', "bucket_name":'afterupgrade02'}, \
@@ -416,21 +420,35 @@ class rbac_upgrade(UpgradeTests):
         for user in sdk_user_check:
             self.createBulkDocuments(user['bucket_name'],password=user['password'],input_key='post_demo_key_'+user['id'], end_num=self.num_items)
 
+
         if pass_updated is None:
             self.createBulkDocuments('beforeupgadesimple', input_key='post_demo_key_beforeupgadesimple', end_num=self.num_items)
-            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
         else:
             self.createBulkDocuments('beforeupgadesimple', password='p@ssword', input_key='post_demo_key_beforeupgadesimple',
                                      end_num=self.num_items)
+
+
+        if (online is True or self.initial_version[0:4] == '3.1.5') and pass_updated is not None:
+            self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
+                               bucket='beforeupgadesimple')
+            self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
+                               bucket='beforeupgadesasl', password='p@ssword')
+        elif pass_updated is None and self.initial_version[0:4] != '3.1.5':
+            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
+            self.execute_query(None, None, bucket='beforeupgadesimple')
+            self.execute_query(None, None, bucket='beforeupgadesasl')
+        elif self.initial_version[0:4] != '3.1.5':
             self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
                                password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
 
-
+        self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
+        self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
         self.execute_query(None, None, bucket='afterupgrade01', password='p@ssword')
         self.execute_query(None, None, bucket='afterupgrade02', password='p@ssword')
 
-
-    def post_upgrade(self, simple=None):
+    def post_upgrade(self, simple=None, online=None):
         # 1. Create new bucket and users in the application
         # 2. Create new memcached connection with new and old users - New and old buckets
         # 3. Change roles for old user
@@ -446,7 +464,7 @@ class rbac_upgrade(UpgradeTests):
 
         #2 Check for SDK connections post upgrade
         self.log.info ("-------------------- CHECK SDK CONNNECIONS POST UPGRADE USERS -----------------------------")
-        self.check_sdk_connection_post_upgrade()
+        self.check_sdk_connection_post_upgrade(online=online)
         self.sleep(10)
 
         self.log.info("-------------------- REBALANCE TO HAVE 1 NODE IN CLUSTER -----------------------------")
@@ -482,7 +500,7 @@ class rbac_upgrade(UpgradeTests):
         self.log.info("-------------------- CHECK MEMCACHED FOR UPGRADED BUCKET USERS -----------------------------")
         self.test_memcached_connection(self.master.ip, user_list, role_list)
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
-        self.check_sdk_connection_post_upgrade(pass_updated=True)   
+        self.check_sdk_connection_post_upgrade(pass_updated=True,online=online)
 
 
 
@@ -531,7 +549,7 @@ class rbac_upgrade(UpgradeTests):
         self.setup_4_5_users()
         self.online_upgrade()
         self.check_cluster_compatiblity(self.master)
-        self.post_upgrade()
+        self.post_upgrade(online=True)
 
 
     def upgrade_all_nodes_online(self):
