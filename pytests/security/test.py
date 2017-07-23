@@ -555,5 +555,5 @@ class rbac_upgrade(UpgradeTests):
         upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
         for threads in upgrade_threads:
             threads.join()
-        self.check_cluster_compatiblity()
+        self.check_cluster_compatiblity(self.master)
         self.post_upgrade(simple=True)
