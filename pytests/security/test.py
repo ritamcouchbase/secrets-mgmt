@@ -376,7 +376,7 @@ class rbac_upgrade(UpgradeTests):
         thread_list.append(create_docs_simple)
         thread_list.append(create_docs_sasl)
 
-        self.info ("Intial -version is ----------{0}".format(self.initial_version[0:4]))
+        self.log.info ("Intial -version is ----------{0}".format(self.initial_version[0:4]))
         if self.initial_version[0:4] != '3.1.5':
             rest.load_sample("travel-sample")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
@@ -425,9 +425,9 @@ class rbac_upgrade(UpgradeTests):
             self.createBulkDocuments('beforeupgadesimple', password='p@ssword', input_key='post_demo_key_beforeupgadesimple',
                                      end_num=self.num_items)
 
-        self.info("Intial -version is ----------{0}".format(self.initial_version[0:4]))
-        self.info("Online is ----------{0}".format(online))
-        self.info("Online is ----------{0}".format(pass_updated))
+        self.log.info("Intial -version is ----------{0}".format(self.initial_version[0:4]))
+        self.log.info("Online is ----------{0}".format(online))
+        self.log.info("Online is ----------{0}".format(pass_updated))
         if (online is True or self.initial_version[0:4] != '3.1.5') and pass_updated is not None:
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                bucket='beforeupgadesimple')
