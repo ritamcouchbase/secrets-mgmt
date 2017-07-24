@@ -18,8 +18,6 @@ class rbac_upgrade(UpgradeTests):
 
     def setUp(self):
         super(rbac_upgrade, self).setUp()
-        self.initial_version = self.input.param("initial_version", '4.5.1-2844')
-        self.upgrade_version = self.input.param("upgrade_version", "5.0.0-3158")
         self.host_ip = []
         for server in self.servers:
             self.host_ip.append(server.ip)
@@ -378,7 +376,7 @@ class rbac_upgrade(UpgradeTests):
         thread_list.append(create_docs_simple)
         thread_list.append(create_docs_sasl)
 
-
+        self.info ("Intial -version is ----------{0}".format(self.initial_version[0:4]))
         if self.initial_version[0:4] != '3.1.5':
             rest.load_sample("travel-sample")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
@@ -427,8 +425,10 @@ class rbac_upgrade(UpgradeTests):
             self.createBulkDocuments('beforeupgadesimple', password='p@ssword', input_key='post_demo_key_beforeupgadesimple',
                                      end_num=self.num_items)
 
-
-        if (online is True or self.initial_version[0:4] == '3.1.5') and pass_updated is not None:
+        self.info("Intial -version is ----------{0}".format(self.initial_version[0:4]))
+        self.info("Online is ----------{0}".format(online))
+        self.info("Online is ----------{0}".format(pass_updated)
+        if (online is True or self.initial_version[0:4] != '3.1.5') and pass_updated is not None:
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                bucket='beforeupgadesimple')
             self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
