@@ -21,7 +21,7 @@ class rbac_upgrade(UpgradeTests):
         self.host_ip = []
         for server in self.servers:
             self.host_ip.append(server.ip)
-        self.upgrade_version = self.input('upgrade_version','5.0.0-3366')
+        self.upgrade_version = self.input.param('upgrade_version','5.0.0-3366')
         self.pre_upgrade_user = ''
         self.pre_upgrade_user_role = ''
         self.post_upgrade_user = ''
