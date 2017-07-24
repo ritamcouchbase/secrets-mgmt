@@ -33,6 +33,31 @@ class rbac_upgrade(UpgradeTests):
         action_list = permission_set['permissionSet']
         return action_list.split(",")
 
+    def check_roles(self, expected, actual):
+        final_result = True
+        for temp_role in expected:
+            result = False
+            for temp1 in actual['users']:
+                if temp1['id'] == temp_role['id']:
+                    if 'admin' not in temp_role.keys():
+                        if (temp1['roles'][0]['bucket_name'] == '*'):
+                            bucket_name = '*'
+                        else:
+                            bucket_name = temp_role['bucket']
+                        if temp1['roles'][0]['bucket_name'] == bucket_name and temp1['roles'][0]['role'] == \
+                                temp_role['action_list']:
+                            result = True
+                    else:
+                        if temp1['roles'][0]['role'] == temp_role['roles']:
+                            result = True
+                if final_result == True and result == True:
+                    final_result = True
+            print "Results for user - {0} is {1}  ----".format(temp_role['id'], result)
+        self.assertTrue(final_result, "Error after upgrade for ")
+
+    def tearDown(self):
+        super(rbac_upgrade, self).tearDown()
+
     def setup_4_5_users(self):
         rest = RestConnection(self.master)
         self.enable_ldap()
@@ -377,7 +402,7 @@ class rbac_upgrade(UpgradeTests):
         thread_list.append(create_docs_simple)
         thread_list.append(create_docs_sasl)
 
-        self.log.info ("Intial -version is ----------{0}".format(self.initial_version[0:4]))
+        self.log.info ("Intial -version is ----------{0}".format(self.initial_version[0:5]))
         if self.initial_version[0:5] != '3.1.5':
             rest.load_sample("travel-sample")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
@@ -505,30 +530,7 @@ class rbac_upgrade(UpgradeTests):
 
 
 
-    def check_roles(self,expected,actual):
-        final_result = True
-        for temp_role in expected:
-            result = False
-            for temp1 in actual['users']:
-                if temp1['id'] == temp_role['id']:
-                    if 'admin' not in temp_role.keys():
-                        if (temp1['roles'][0]['bucket_name'] == '*'):
-                            bucket_name = '*'
-                        else:
-                            bucket_name = temp_role['bucket']
-                        if temp1['roles'][0]['bucket_name'] == bucket_name and temp1['roles'][0]['role'] == \
-                                temp_role['action_list']:
-                            result = True
-                    else:
-                        if temp1['roles'][0]['role'] == temp_role['roles']:
-                            result = True
-                if final_result == True and result == True:
-                    final_result = True
-            print "Results for user - {0} is {1}  ----".format(temp_role['id'],result)
-        self.assertTrue(final_result, "Error after upgrade for ")
 
-    def tearDown(self):
-        super(rbac_upgrade, self).tearDown()
 
     def enable_ldap(self):
         rest = RestConnection(self.master)
@@ -557,7 +559,8 @@ class rbac_upgrade(UpgradeTests):
         self.pre_upgrade()
         self.setup_4_5_users()
         self.online_upgrade()
-        self.post_upgrade()
+        self.check_cluster_compatiblity(self.master)
+        self.post_upgrade(online=True)
 
     def upgrade_all_nodes_offline(self):
         self.pre_upgrade(offline=True)
