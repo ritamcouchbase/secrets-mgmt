@@ -427,7 +427,7 @@ class rbac_upgrade(UpgradeTests):
 
         self.info("Intial -version is ----------{0}".format(self.initial_version[0:4]))
         self.info("Online is ----------{0}".format(online))
-        self.info("Online is ----------{0}".format(pass_updated)
+        self.info("Online is ----------{0}".format(pass_updated))
         if (online is True or self.initial_version[0:4] != '3.1.5') and pass_updated is not None:
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                bucket='beforeupgadesimple')
