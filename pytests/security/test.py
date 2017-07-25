@@ -412,7 +412,7 @@ class rbac_upgrade(UpgradeTests):
 
             query_docs_simple = Thread(name='query_docs_simple_bucket', target=self.execute_query, args=(None, None, 'beforeupgadesimple', None,))
             query_docs_sasl = Thread(name='query_docs_sasl_bucket', target=self.execute_query,
-                                                args=(None, None, 'beforeupgadesasl', None, ))
+                                                args=(None, None, 'beforeupgadesasl', 'p@ssword', ))
 
             thread_list.append(query_docs_simple)
             thread_list.append(query_docs_sasl)
@@ -456,11 +456,11 @@ class rbac_upgrade(UpgradeTests):
         if online is True and pass_updated is not None:
             self.log.info ("First Condition")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
-                               bucket='beforeupgadesimple',password='password')
+                               bucket='beforeupgadesimple',password='p@ssword')
             self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
-                               bucket='beforeupgadesasl', password='password')
-            self.execute_query(None, None, bucket='beforeupgadesimple',password='password')
-            self.execute_query(None, None, bucket='beforeupgadesasl', password='password')
+                               bucket='beforeupgadesasl', password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is True and pass_updated is None:
             self.log.info("Second Condition")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
@@ -482,7 +482,7 @@ class rbac_upgrade(UpgradeTests):
             self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
 
-        if pass_updated is not None:
+        if pass_updated is None:
             self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
             self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
 
