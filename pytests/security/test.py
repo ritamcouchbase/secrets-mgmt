@@ -451,26 +451,41 @@ class rbac_upgrade(UpgradeTests):
             self.createBulkDocuments('beforeupgadesimple', password='p@ssword', input_key='post_demo_key_beforeupgadesimple',
                                      end_num=self.num_items)
 
-        self.log.info("Intial -version is ----------{0}".format(self.initial_version[0:5]))
         self.log.info("Online is ----------{0}".format(online))
-        self.log.info("Online is ----------{0}".format(pass_updated))
-        if (online is True or self.initial_version[0:5] != '3.1.5') and pass_updated is not None:
+        self.log.info("Password Updated is ----------{0}".format(pass_updated))
+        if online is True and pass_updated is not None:
+            self.log.info ("First Condition")
+            self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
+                               bucket='beforeupgadesimple',password='password')
+            self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
+                               bucket='beforeupgadesasl', password='password')
+            self.execute_query(None, None, bucket='beforeupgadesimple',password='password')
+            self.execute_query(None, None, bucket='beforeupgadesasl', password='password')
+        elif online is True and pass_updated is None:
+            self.log.info("Second Condition")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                bucket='beforeupgadesimple')
             self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
                                bucket='beforeupgadesasl', password='p@ssword')
-        elif pass_updated is None and self.initial_version[0:4] != '3.1.5':
-            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
             self.execute_query(None, None, bucket='beforeupgadesimple')
-            self.execute_query(None, None, bucket='beforeupgadesasl')
-        elif self.initial_version[0:4] != '3.1.5':
+            self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
+        elif online is None and pass_updated is None:
+            self.log.info("Third Condition")
+            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
+                               password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesimple')
+            self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
+        elif online is None and pass_updated is not None:
+            self.log.info("Fourth Condition")
             self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
                                password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
 
-        self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
-        self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
+        if pass_updated is not None:
+            self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
+            self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
+
         self.execute_query(None, None, bucket='afterupgrade01', password='p@ssword')
         self.execute_query(None, None, bucket='afterupgrade02', password='p@ssword')
 
