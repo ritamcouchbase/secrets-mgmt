@@ -499,9 +499,10 @@ class rbac_upgrade(UpgradeTests):
 
         #1. Create new bucket and new users in the system
         self.post_upgrade_buckets()
-        self.post_upgrade_new_users_new_bucket()
-        current_roles = RestConnection(self.master).retrieve_user_roles()
-        self.check_roles(self.post_upgrade_user_role, current_roles)
+        '''
+        #self.post_upgrade_new_users_new_bucket()
+        #current_roles = RestConnection(self.master).retrieve_user_roles()
+        #self.check_roles(self.post_upgrade_user_role, current_roles)
 
         #2 Check for SDK connections post upgrade
         self.log.info ("-------------------- CHECK SDK CONNNECIONS POST UPGRADE USERS -----------------------------")
@@ -542,7 +543,7 @@ class rbac_upgrade(UpgradeTests):
         self.test_memcached_connection(self.master.ip, user_list, role_list)
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
         self.check_sdk_connection_post_upgrade(pass_updated=True,online=online)
-
+        '''
 
 
 
@@ -566,8 +567,8 @@ class rbac_upgrade(UpgradeTests):
         self.pre_upgrade()
         self.setup_4_5_users()
         self.online_upgrade()
-        #self.check_cluster_compatiblity(self.master)
-        #self.post_upgrade(online=True)
+        self.check_cluster_compatiblity(self.master)
+        self.post_upgrade(online=True)
 
 
     def upgrade_all_nodes_online(self):
