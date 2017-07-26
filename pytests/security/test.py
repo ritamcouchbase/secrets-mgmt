@@ -499,9 +499,9 @@ class rbac_upgrade(UpgradeTests):
 
         #1. Create new bucket and new users in the system
         self.post_upgrade_buckets()
+        self.post_upgrade_new_users_new_bucket()
+        current_roles = RestConnection(self.master).retrieve_user_roles()
         '''
-        #self.post_upgrade_new_users_new_bucket()
-        #current_roles = RestConnection(self.master).retrieve_user_roles()
         #self.check_roles(self.post_upgrade_user_role, current_roles)
 
         #2 Check for SDK connections post upgrade
