@@ -566,8 +566,8 @@ class rbac_upgrade(UpgradeTests):
         self.pre_upgrade()
         self.setup_4_5_users()
         self.online_upgrade()
-        self.check_cluster_compatiblity(self.master)
-        self.post_upgrade(online=True)
+        #self.check_cluster_compatiblity(self.master)
+        #self.post_upgrade(online=True)
 
 
     def upgrade_all_nodes_online(self):
