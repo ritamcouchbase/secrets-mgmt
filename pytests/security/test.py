@@ -582,12 +582,12 @@ class rbac_upgrade(BaseTestCase):
         self.post_upgrade(online=True)
 
     def upgrade_all_nodes_offline(self):
-        self.pre_upgrade(offline=True)
-        self.setup_4_5_users()
-        upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
-        for threads in upgrade_threads:
-            threads.join()
-        self.check_cluster_compatiblity(self.master)
+        #self.pre_upgrade(offline=True)
+        #self.setup_4_5_users()
+        #upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
+        #for threads in upgrade_threads:
+        #    threads.join()
+        #self.check_cluster_compatiblity(self.master)
         self.post_upgrade()
 
 
