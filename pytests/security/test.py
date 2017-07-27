@@ -14,7 +14,7 @@ from basetestcase import BaseTestCase
 from testmemcached import TestSDK
 
 
-class rbac_upgrade(UpgradeTests):
+class rbac_upgrade(BaseTestCase):
 
     def setUp(self):
         super(rbac_upgrade, self).setUp()
@@ -567,10 +567,10 @@ class rbac_upgrade(UpgradeTests):
 
 
     def upgrade_all_nodes(self):
-        self.pre_upgrade()
-        self.setup_4_5_users()
-        self.online_upgrade()
-        self.check_cluster_compatiblity(self.master)
+        #self.pre_upgrade()
+        #self.setup_4_5_users()
+        #self.online_upgrade()
+        #self.check_cluster_compatiblity(self.master)
         self.post_upgrade(online=True)
 
 
