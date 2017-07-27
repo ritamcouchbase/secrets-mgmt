@@ -203,7 +203,7 @@ class rbac_upgrade(UpgradeTests):
                                   {'id': 'afterupgrade02', 'name': 'afterupgrade02', 'password': 'p@ssword'}, \
                                   ]
 
-        RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
+        #RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
 
         self.post_upgrade_user_role = [{'id': 'post_admin', 'name': 'post_admin', 'roles': 'admin',
                                         'action_list': 'admin', 'bucket': 'afterupgrade01', 'admin': 'yes'}, \
@@ -261,7 +261,10 @@ class rbac_upgrade(UpgradeTests):
                                         'action_list': 'data_monitoring', 'bucket': 'afterupgrade02'}
                                        ]
 
-        RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
+        #RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
+        for i in range(0,len(self.post_upgrade_user_role)):
+            payload = "name=" + self.post_upgrade_user_role[i]['id'] + "&roles=" + self.post_upgrade_user_role[i]['roles'] + "&password=p@ssword"
+            RestConnection(self.master).add_set_builtin_user(self.post_upgrade_user_role[i]['id'],payload)
 
     def change_pass_new_user(self):
         rest = RestConnection(self.master)
