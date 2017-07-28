@@ -203,7 +203,7 @@ class rbac_upgrade(BaseTestCase):
                                   {'id': 'afterupgrade02', 'name': 'afterupgrade02', 'password': 'p@ssword'}, \
                                   ]
 
-        #RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
+        RbacBase().create_user_source(self.post_upgrade_user, 'builtin', self.master)
 
         self.post_upgrade_user_role = [{'id': 'post_admin', 'name': 'post_admin', 'roles': 'admin',
                                         'action_list': 'admin', 'bucket': 'afterupgrade01', 'admin': 'yes'}, \
@@ -261,10 +261,10 @@ class rbac_upgrade(BaseTestCase):
                                         'action_list': 'data_monitoring', 'bucket': 'afterupgrade02'}
                                        ]
 
-        #RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
-        for i in range(0,len(self.post_upgrade_user_role)):
-            payload = "name=" + self.post_upgrade_user_role[i]['id'] + "&roles=" + self.post_upgrade_user_role[i]['roles'] + "&password=p@ssword"
-            RestConnection(self.master).add_set_builtin_user(self.post_upgrade_user_role[i]['id'],payload)
+        RbacBase().add_user_role(self.post_upgrade_user_role, RestConnection(self.master), 'builtin')
+        #for i in range(0,len(self.post_upgrade_user_role)):
+        #    payload = "name=" + self.post_upgrade_user_role[i]['id'] + "&roles=" + self.post_upgrade_user_role[i]['roles'] + "&password=p@ssword"
+        #    RestConnection(self.master).add_set_builtin_user(self.post_upgrade_user_role[i]['id'],payload)
 
     def change_pass_new_user(self):
         rest = RestConnection(self.master)
@@ -504,8 +504,7 @@ class rbac_upgrade(BaseTestCase):
         self.post_upgrade_buckets()
         self.post_upgrade_new_users_new_bucket()
         current_roles = RestConnection(self.master).retrieve_user_roles()
-        '''
-        #self.check_roles(self.post_upgrade_user_role, current_roles)
+        self.check_roles(self.post_upgrade_user_role, current_roles)
 
         #2 Check for SDK connections post upgrade
         self.log.info ("-------------------- CHECK SDK CONNNECIONS POST UPGRADE USERS -----------------------------")
@@ -546,9 +545,6 @@ class rbac_upgrade(BaseTestCase):
         self.test_memcached_connection(self.master.ip, user_list, role_list)
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
         self.check_sdk_connection_post_upgrade(pass_updated=True,online=online)
-        '''
-
-
 
 
     def enable_ldap(self):
@@ -567,10 +563,10 @@ class rbac_upgrade(BaseTestCase):
 
 
     def upgrade_all_nodes(self):
-        #self.pre_upgrade()
-        #self.setup_4_5_users()
-        #self.online_upgrade()
-        #self.check_cluster_compatiblity(self.master)
+        self.pre_upgrade()
+        self.setup_4_5_users()
+        self.online_upgrade()
+        self.check_cluster_compatiblity(self.master)
         self.post_upgrade(online=True)
 
 
@@ -582,12 +578,12 @@ class rbac_upgrade(BaseTestCase):
         self.post_upgrade(online=True)
 
     def upgrade_all_nodes_offline(self):
-        #self.pre_upgrade(offline=True)
-        #self.setup_4_5_users()
-        #upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
-        #for threads in upgrade_threads:
-        #    threads.join()
-        #self.check_cluster_compatiblity(self.master)
+        self.pre_upgrade(offline=True)
+        self.setup_4_5_users()
+        upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
+        for threads in upgrade_threads:
+            threads.join()
+        self.check_cluster_compatiblity(self.master)
         self.post_upgrade()
 
 
