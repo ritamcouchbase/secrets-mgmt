@@ -14,7 +14,7 @@ from basetestcase import BaseTestCase
 from testmemcached import TestSDK
 
 
-class rbac_upgrade(BaseTestCase):
+class rbac_upgrade(UpgradeTests):
 
     def setUp(self):
         super(rbac_upgrade, self).setUp()
