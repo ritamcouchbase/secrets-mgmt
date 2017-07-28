@@ -474,8 +474,7 @@ class rbac_upgrade(UpgradeTests):
             self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
         elif online is None and pass_updated is None:
             self.log.info("Third Condition")
-            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
-                               password='p@ssword')
+            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
             self.execute_query(None, None, bucket='beforeupgadesimple')
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is None and pass_updated is not None:
