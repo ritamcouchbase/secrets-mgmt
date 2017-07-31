@@ -457,10 +457,7 @@ class rbac_upgrade(UpgradeTests):
         self.log.info("Password Updated is ----------{0}".format(pass_updated))
         if online is True and pass_updated is not None:
             self.log.info ("First Condition")
-            self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
-                               bucket='beforeupgadesimple',password='p@ssword')
-            self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
-                               bucket='beforeupgadesasl', password='p@ssword')
+            self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is True and pass_updated is None:
