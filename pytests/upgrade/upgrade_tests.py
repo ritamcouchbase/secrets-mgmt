@@ -71,7 +71,12 @@ class UpgradeTests(NewUpgradeBaseTest):
                                                          end=self.num_items* 0.75)
         self._install(self.servers[:self.nodes_init])
         self._log_start(self)
-        self.cluster.rebalance([self.master], self.servers[1:self.nodes_init], [], services=self.services)
+        master_services = self.get_services(self.servers[:1], \
+                                            self.services_init, \
+                                            start_node=0)
+        if master_services != None:
+            master_services = master_services[0].split(",")
+        self.cluster.rebalance([self.master], self.servers[1:self.nodes_init], [], services=master_services)
         """ sometimes, when upgrade failed and node does not install couchbase
             server yet, we could not set quota at beginning of the test.  We
             have to wait to install new couchbase server to set it properly here """

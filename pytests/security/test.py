@@ -10,7 +10,6 @@ from security.rbacmain import rbacmain
 import urllib
 from couchbase_helper.documentgenerator import BlobGenerator
 from couchbase.n1ql import N1QLQuery
-from basetestcase import BaseTestCase
 from testmemcached import TestSDK
 
 
