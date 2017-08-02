@@ -27,10 +27,19 @@ class rbac_upgrade(UpgradeTests):
         self.post_upgrade_user_role = ''
         self.num_items = self.input.param('num_items',10000)
 
+    def tearDown(self):
+        super(rbac_upgrade, self).tearDown()
+
     def _return_actions(self, permission_set):
         permission_set = dataRoles()._return_permission_set(permission_set)
         action_list = permission_set['permissionSet']
         return action_list.split(",")
+
+    def enable_ldap(self):
+        rest = RestConnection(self.master)
+        api = rest.baseUrl + 'settings/saslauthdAuth'
+        params = urllib.urlencode({"enabled": 'true', "admins": [], "roAdmins": []})
+        status, content, header = rest._http_request(api, 'POST', params)
 
     def check_roles(self, expected, actual):
         final_result = True
@@ -53,9 +62,6 @@ class rbac_upgrade(UpgradeTests):
                     final_result = True
             print "Results for user - {0} is {1}  ----".format(temp_role['id'], result)
         self.assertTrue(final_result, "Error after upgrade for ")
-
-    def tearDown(self):
-        super(rbac_upgrade, self).tearDown()
 
     def setup_4_5_users(self):
         rest = RestConnection(self.master)
@@ -541,19 +547,9 @@ class rbac_upgrade(UpgradeTests):
         self.log.info("-------------------- CHECK SDK FOR UPGRADED BUCKET USERS -----------------------------")
         self.check_sdk_connection_post_upgrade(pass_updated=True,online=online)
 
-
-    def enable_ldap(self):
-        rest = RestConnection(self.master)
-        api = rest.baseUrl + 'settings/saslauthdAuth'
-        params = urllib.urlencode({"enabled": 'true', "admins": [], "roAdmins": []})
-        status, content, header = rest._http_request(api, 'POST', params)
-
     def check_cluster_compatiblity(self, server):
         rest = RestConnection(server)
-        print rest.get_pools_default()
-        print rest.get_pools_default()['nodes']
         cluster_compatibility =  (rest.get_pools_default()['nodes'])[0]['clusterCompatibility']
-        print cluster_compatibility
         self.assertEquals(cluster_compatibility, 327680, 'Issue with cluster compatibility')
 
 
@@ -565,12 +561,12 @@ class rbac_upgrade(UpgradeTests):
         self.post_upgrade(online=True)
 
 
-    def upgrade_all_nodes_online(self):
+    def upgrade_all_nodes_online_pre_4(self):
         self.pre_upgrade()
         self.setup_4_5_users()
         self.online_upgrade()
         self.check_cluster_compatiblity(self.master)
-        self.post_upgrade(online=True)
+        self.post_upgrade(online=True, simple=True)
 
     def upgrade_all_nodes_offline(self):
         self.pre_upgrade(offline=True)
@@ -582,7 +578,7 @@ class rbac_upgrade(UpgradeTests):
         self.post_upgrade()
 
 
-    def upgrade_all_nodes_offline_simple(self):
+    def upgrade_all_nodes_offline_pre_4(self):
         self.pre_upgrade(offline=True)
         upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
         for threads in upgrade_threads:
