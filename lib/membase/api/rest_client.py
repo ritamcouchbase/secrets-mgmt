@@ -3461,7 +3461,7 @@ class RestConnection(object):
         api = self.baseUrl + "/node/controller/changeMasterPassword"
         params = urllib.urlencode({
             'newPassword': '{0}'.format(new_password.encode('utf-8').strip())
-                                        +})
+                                        })
         log.info("Params getting set is ---- {0}".format(params))
         params = params.replace('%24', '$')
         params = params.replace('%3D', '=')
@@ -3472,7 +3472,7 @@ class RestConnection(object):
         print ("Header of the response is {0}".format(header))
         return status
 
-    
+
     '''LDAP Rest API '''
     '''
     clearLDAPSettings - Function to clear LDAP settings
