@@ -75,7 +75,7 @@ class SecretsMgmtTests(BaseTestCase):
                     print 'Process Memcached is not running'
                     #shell.set_environment_variable("CB_MASTER_PASSWORD", self.password)
                     shell.execute_command(
-                        "export CB_MASTER_PASSWORD=p@ssword; /opt/couchbase/etc/couchbase_init.d start")
+                        "export CB_MASTER_PASSWORD=" + self.password + "; /opt/couchbase/etc/couchbase_init.d start")
 
 
     def test_multiple_prompt_enter_correct_2retries(self):
