@@ -159,16 +159,18 @@ class rbac_upgrade(UpgradeTests):
 
         change_role_pre_upg_user = [
             {'id': 'beforeupgadesasl', 'name': 'beforeupgadesasl', 'password': 'p@ssword'}, \
-            {'id': 'beforeupgadesimple', 'name': 'beforeupgadesimple', 'password': 'p@ssword'}, \
-            {'id': 'travel-sample', 'name': 'travel-sample', 'password': 'p@ssword'} ]
+            {'id': 'beforeupgadesimple', 'name': 'beforeupgadesimple', 'password': 'p@ssword'}]
 
         change_role_pre_upgrade_data = [
             {'id': 'beforeupgadesasl', 'name': 'beforeupgadesasl', 'roles': 'bucket_full_access[beforeupgadesasl]',
              'action_list': 'bucket_full_access', 'bucket': 'beforeupgadesasl'}, \
             {'id': 'beforeupgadesimple', 'name': 'beforeupgadesimple', 'roles': 'bucket_full_access[beforeupgadesimple]',
-             'action_list': 'bucket_full_access', 'bucket': 'beforeupgadesimple'}, \
-            {'id': 'travel-sample', 'name': 'travel-sample', 'roles': 'bucket_full_access[travel-sample]',
-             'action_list': 'bucket_full_access', 'bucket': 'travel-sample'}]
+             'action_list': 'bucket_full_access', 'bucket': 'beforeupgadesimple'}]
+
+        if self.initial_version[0:5] != '3.1.5':
+            change_role_pre_upg_user.append( {'id': 'travel-sample', 'name': 'travel-sample', 'password': 'p@ssword'} )
+            change_role_pre_upgrade_data.append({'id': 'travel-sample', 'name': 'travel-sample', 'roles': 'bucket_full_access[travel-sample]',
+             'action_list': 'bucket_full_access', 'bucket': 'travel-sample'})
 
         for i in range(0,len(change_role_pre_upg_user)):
             payload = "name=" + change_role_pre_upgrade_data[i]['id'] + "&roles=" + change_role_pre_upgrade_data[i]['roles'] + "&password=" + change_role_pre_upg_user[i]['password']
@@ -481,7 +483,8 @@ class rbac_upgrade(UpgradeTests):
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is None and pass_updated is not None:
             self.log.info("Fourth Condition")
-            self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
+            if self.initial_version[0:5] != '3.1.5':
+                self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
                                password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
@@ -525,7 +528,7 @@ class rbac_upgrade(UpgradeTests):
             self.log.info("-------------------- CHECK MEMCACHED FOR OLD USERS -----------------------------")
             self.test_memcached_connection(self.master.ip, self.pre_upgrade_user, self.pre_upgrade_user_role)
             self.log.info("-------------------- CHECK ROLES FOR OLD USERS -----------------------------")
-            self.check_roles(self.pre_upgrade_user_role, current_roles)
+                self.check_roles(self.pre_upgrade_user_role, current_roles)
             self.sleep(30)
         #5 Change roles for pre-upgrade users
             self.log.info("-------------------- CHANGE ROLES OLD USERS -----------------------------")

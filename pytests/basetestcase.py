@@ -32,6 +32,7 @@ from testconstants import MIN_COMPACTION_THRESHOLD
 from testconstants import MAX_COMPACTION_THRESHOLD
 from membase.helper.cluster_helper import ClusterOperationHelper
 from security.rbac_base import RbacBase
+from security.SecretsMasterBase import SecretsMasterBase
 
 from couchbase_cli import CouchbaseCLI
 import testconstants
@@ -164,6 +165,9 @@ class BaseTestCase(unittest.TestCase):
             self.sasl_bucket_priority = self.input.param("sasl_bucket_priority", None)
             self.standard_bucket_priority = self.input.param("standard_bucket_priority", None)
             # end of bucket parameters spot (this is ongoing)
+
+            self.enable_secrets = self.input.param("enable_secrets", False)
+            self.secret_password = self.input.param("secret_password", 'p@ssw0rd')
 
             if self.skip_setup_cleanup:
                 self.buckets = RestConnection(self.master).get_buckets()
@@ -323,6 +327,10 @@ class BaseTestCase(unittest.TestCase):
             if str(self.__class__).find('upgrade_tests') == -1 and \
                             str(self.__class__).find('newupgradetests') == -1:
                 self._bucket_creation()
+
+            if self.enable_secrets:
+                self._setup_node_secret(self.secret_password)
+
             self.log.info("==============  basetestcase setup was finished for test #{0} {1} ==============" \
                           .format(self.case_number, self._testMethodName))
 
@@ -411,6 +419,10 @@ class BaseTestCase(unittest.TestCase):
                 BucketOperationHelper.delete_all_buckets_or_assert(self.servers, self)
                 ClusterOperationHelper.cleanup_cluster(self.servers, master=self.master)
                 ClusterOperationHelper.wait_for_ns_servers_or_assert(self.servers, self)
+
+                if self.enable_secrets:
+                    self._setup_node_secret("")
+
                 self.log.info("==============  basetestcase cleanup was finished for test #{0} {1} ==============" \
                               .format(self.case_number, self._testMethodName))
         except BaseException:
@@ -2288,6 +2300,10 @@ class BaseTestCase(unittest.TestCase):
             map[node.ip] = node.services
             index += 1
         return map
+
+    def _setup_node_secret(self, secret_password):
+        for server in self.servers:
+            SecretsMasterBase(server).setup_pass_node(server, secret_password)
 
     def find_nodes_in_list(self):
         self.nodes_in_list = self.servers[self.nodes_init:self.nodes_init + self.nodes_in]

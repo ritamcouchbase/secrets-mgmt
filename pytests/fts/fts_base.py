@@ -29,6 +29,7 @@ from couchbase_helper.documentgenerator import JsonDocGenerator
 from lib.membase.api.exception import FTSException
 from es_base import ElasticSearchBase
 from security.rbac_base import RbacBase
+from security.SecretsMasterBase import SecretsMasterBase
 
 
 
@@ -2809,6 +2810,8 @@ class FTSBaseTest(unittest.TestCase):
         self.field_name = self._input.param("field_name", None)
         self.field_type = self._input.param("field_type", None)
         self.field_alias = self._input.param("field_alias", None)
+        self.enable_secrets = self._input.param("enable_secrets", False)
+        self.secret_password = self._input.param("secret_password", 'p@ssw0rd')
 
         self.log.info(
             "==== FTSbasetests setup is started for test #{0} {1} ===="
@@ -2838,12 +2841,20 @@ class FTSBaseTest(unittest.TestCase):
     def __is_cluster_run(self):
         return len(set([server.ip for server in self._input.servers])) == 1
 
+    def _setup_node_secret(self, secret_password):
+        for server in self._input.servers:
+            SecretsMasterBase(server).setup_pass_node(server, secret_password)
+
+
     def tearDown(self):
         """Clusters cleanup"""
         if len(self.__report_error_list) > 0:
             error_logger = self.check_error_count_in_fts_log()
             if error_logger:
                 self.fail("Errors found in logs : {0}".format(error_logger))
+
+        if self.enable_secrets:
+            `self._setup_node_secret("")
 
         if self._input.param("negative_test", False):
             if hasattr(self, '_resultForDoCleanups') \
@@ -2932,6 +2943,9 @@ class FTSBaseTest(unittest.TestCase):
         role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
         RbacBase().add_user_role(role_list, RestConnection(master), 'builtin')
         time.sleep(10)
+
+        if self.enable_secrets:
+            self._setup_node_secret(self.secret_password)
 
         self.__set_free_servers()
         if not no_buckets:

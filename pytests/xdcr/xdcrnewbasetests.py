@@ -25,7 +25,7 @@ from couchbase_helper.documentgenerator import BlobGenerator, DocumentGenerator
 from lib.membase.api.exception import XDCRException
 from security.auditmain import audit
 from security.rbac_base import RbacBase
-
+from security.SecretsMasterBase import SecretsMasterBase
 
 class RenameNodeException(XDCRException):
 
@@ -2462,6 +2462,7 @@ class XDCRNewBaseTest(unittest.TestCase):
             "==== XDCRNewbasetests setup is finished for test #{0} {1} ===="
             .format(self.__case_number, self._testMethodName))
 
+
     def __is_test_failed(self):
         return (hasattr(self, '_resultForDoCleanups')
                 and len(self._resultForDoCleanups.failures
@@ -2477,6 +2478,10 @@ class XDCRNewBaseTest(unittest.TestCase):
     def __is_cluster_run(self):
         return len(set([server.ip for server in self._input.servers])) == 1
 
+    def _setup_node_secret(self, secret_password):
+        for server in self._input.servers:
+            SecretsMasterBase(server).setup_pass_node(server, secret_password)
+
     def tearDown(self):
         """Clusters cleanup"""
         if self._input.param("negative_test", False):
@@ -2489,6 +2494,9 @@ class XDCRNewBaseTest(unittest.TestCase):
                               "errors as expected, hence not failing it")
             else:
                 raise XDCRException("Negative test passed!")
+
+        if self.enable_secrets:
+            self._setup_node_secret("")
 
         # collect logs before tearing down clusters
         if self._input.param("get-cbcollect-info", False) and \
@@ -2589,6 +2597,9 @@ class XDCRNewBaseTest(unittest.TestCase):
                                              RestConnection(self.get_cb_cluster_by_name('C' + str(i)).get_master_node()),
                                              'builtin')
 
+        if self.enable_secrets:
+            self._setup_node_secret(self.secret_password)
+
     def __init_parameters(self):
         self.__case_number = self._input.param("case_number", 0)
         self.__topology = self._input.param("ctopology", TOPOLOGY.CHAIN)
@@ -2656,6 +2667,8 @@ class XDCRNewBaseTest(unittest.TestCase):
         self._evict_with_compactor = self._input.param("evict_with_compactor", False)
         self._replicator_role = self._input.param("replicator_role",False)
         self._replicator_all_buckets = self._input.param("replicator_all_buckets",False)
+        self.enable_secrets = self._input.param("enable_secrets", False)
+        self.secret_password = self._input.param("secret_password", 'p@ssw0rd')
 
     def __initialize_error_count_dict(self):
         """
