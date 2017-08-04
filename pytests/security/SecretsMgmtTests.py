@@ -54,7 +54,7 @@ class SecretsMgmtTests(BaseTestCase):
         print self.password
         self.secretmgmt_base_obj.set_password(self.master,self.password)
         self.secretmgmt_base_obj.restart_server_with_env(self.master,self.password)
-        temp_return = self.secretmgmt_base_obj.check_log_files(self.master,"/babysitter.log","Initialization")
+        temp_return = self.secretmgmt_base_obj.check_log_files(self.master,"/babysitter.log","Booted")
         self.assertTrue(temp_return,"Babysitter.log does not contain node initialization code")
 
     def test_multiple_prompt_3times(self):
