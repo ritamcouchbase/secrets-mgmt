@@ -72,6 +72,7 @@ class SecretsMgmtTests(BaseTestCase):
             for server in self.servers:
                 shell = RemoteMachineShellConnection(server)
                 if (RemoteMachineHelper(shell).is_process_running('memcached') is None):
+                    print 'Process Memcached is not running'
                     shell.set_environment_variable("CB_MASTER_PASSWORD", self.password)
 
 
