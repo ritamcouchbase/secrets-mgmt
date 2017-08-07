@@ -7,6 +7,7 @@ import base64
 import requests
 import urllib
 import random
+import time
 
 class ServerInfo():
     def __init__(self,
@@ -48,7 +49,7 @@ class x509main:
         self.slave_host = x509main.SLAVE_HOST
 
     def getLocalIPAddress(self):
-
+        '''
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('couchbase.com', 0))
         return s.getsockname()[0]
@@ -57,7 +58,6 @@ class x509main:
         if '1' not in ipAddress:
             status, ipAddress = commands.getstatusoutput("ifconfig eth0 | grep  -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | awk '{print $2}'")
         return ipAddress
-        '''
 
     def setup_cluster_nodes_ssl(self,servers=[],reload_cert=False):
         for server in servers:
@@ -208,17 +208,22 @@ class x509main:
         cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
         if host is None:
             host = self.host.ip
-        try:
-            r = requests.get("https://"+host+":18091",verify=cert_file)
-            if r.status_code == 200:
-                header = {'Content-type': 'application/x-www-form-urlencoded'}
-                params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
-                r = requests.post("https://"+host+":18091/uilogin",data=params,headers=header,verify=cert_file)
-                return r.status_code
-        except Exception, ex:
-            log.info ("into exception form validate_ssl_login")
-            log.info (" Exception is {0}".format(ex))
-            return 'error'
+        r = None
+        while r == None:
+            try:
+                r = requests.get("https://"+host+":18091",verify=cert_file)
+                print "After getting requests"
+                if r.status_code == 200:
+                    header = {'Content-type': 'application/x-www-form-urlencoded'}
+                    params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
+                    r = requests.post("https://"+host+":18091/uilogin",data=params,headers=header,verify=cert_file)
+                    return r.status_code
+            except Exception, ex:
+                log.info ("into exception form validate_ssl_login")
+                log.info (" Exception is {0}".format(ex))
+                time.sleep(5)
+                continue
+
 
     def _get_cluster_ca_cert(self):
         rest = RestConnection(self.host)
