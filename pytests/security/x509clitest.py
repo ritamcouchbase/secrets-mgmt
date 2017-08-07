@@ -131,24 +131,22 @@ class X509clitest(x509tests):
     def test_end_to_end_single_node(self):
         output, error = self._upload_cert_cli()
         output, error = self._setup_cluster_nodes(self.master)
-        status = x509main(self.master)._validate_ssl_login()
+        status = x509main(self.master)._validate_ssl_login([self.master])
         self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_end_to_end_cluster(self):
         output, error = self._upload_cert_cli()
         self._setup_all_cluster_nodes(self.servers)
-        for server in self.servers:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(self.servers)
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_end_to_end_after_cluster(self):
         output, error = self._upload_cert_cli()
         self._setup_all_cluster_nodes(self.servers)
         servers_in = self.servers[1:]
         self.cluster.rebalance(self.servers, servers_in, [])
-        for server in self.servers:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(self.servers)
+        self.assertEqual(status, 200, "Not able to login via SSL code")
 
     def test_retrieve_cluster_cert(self):
         i =0

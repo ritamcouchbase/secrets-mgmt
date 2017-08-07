@@ -16,7 +16,7 @@ class x509tests(BaseTestCase):
     def setUp(self):
         super(x509tests, self).setUp()
         self._reset_original()
-        SSLtype = self.input.param("SSLtype","go")
+        SSLtype = self.input.param("SSLtype","openssl")
         encryption_type = self.input.param('encryption_type',"")
         key_length=self.input.param("key_length",1024)
         x509main(self.master)._generate_cert(self.servers,type=SSLtype,encryption=encryption_type,key_length=key_length)
@@ -32,19 +32,16 @@ class x509tests(BaseTestCase):
                 self.sleep(30)
 
     def tearDown(self):
-        #self._reset_original()
-        #shell = RemoteMachineShellConnection(x509main.SLAVE_HOST)
-        #shell.execute_command("rm " + x509main.CACERTFILEPATH)
-        #super(x509tests, self).tearDown()
-        print "est"
+        self._reset_original()
+        shell = RemoteMachineShellConnection(x509main.SLAVE_HOST)
+        shell.execute_command("rm " + x509main.CACERTFILEPATH)
+        super(x509tests, self).tearDown()
 
 
     def _reset_original(self):
         self.log.info ("Reverting to original state - regenerating certificate and removing inbox folder")
         tmp_path = "/tmp/abcd.pem"
         for servers in self.servers:
-            #rest = RestConnection(servers)
-            #rest.regenerate_cluster_certificate()
             cli_command = "ssl-manage"
             remote_client = RemoteMachineShellConnection(servers)
             options = "--regenerate-cert={0}".format(tmp_path)
@@ -132,7 +129,7 @@ class x509tests(BaseTestCase):
 
     def test_basic_ssl_test(self):
         x509main(self.master).setup_master()
-        status = x509main(self.master)._validate_ssl_login()
+        status = x509main(self.master)._validate_ssl_login([self.master])
         self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_get_cluster_ca(self):
@@ -152,7 +149,7 @@ class x509tests(BaseTestCase):
         servs_inout = self.servers[1]
         rest.add_node('Administrator','password',servs_inout.ip)
         for server in self.servers[:2]:
-            status, content, header = x509main(server)._get_cluster_ca_cert()
+            status, content, header = x509main(self.master)._get_cluster_ca_cert()
             content = json.loads(content)
             self.assertTrue(status,"Issue while Cluster CA Cert")
             self.assertEqual(content['cert']['type'],"uploaded","Type of certificate is mismatch")
@@ -232,9 +229,8 @@ class x509tests(BaseTestCase):
             known_nodes.append('ns_1@' + server.ip)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-        for server in servs_inout:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(servs_inout)
+        self.assertEqual(status,200,"Not able to login via SSL code")
         rest.fail_over(serv_out,graceful=False)
         if (rebalance):
             rest.rebalance(known_nodes,[serv_out])
@@ -244,9 +240,8 @@ class x509tests(BaseTestCase):
             rest.add_back_node(serv_out)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-        for server in servs_inout:
-            response = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        response = x509main(self.master)._validate_ssl_login(servs_inout)
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_graceful_add_back_node_with_cert(self,recovery_type=None):
         recovery_type = self.input.param('recovery_type')
@@ -268,9 +263,8 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        for server in servs_inout:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(servs_inout)
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
         rest.fail_over(serv_out,graceful=True)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
@@ -279,9 +273,8 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        for server in servs_inout:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(servs_inout)
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_autofailover(self):
         rest = RestConnection(self.master)
@@ -305,9 +298,8 @@ class x509tests(BaseTestCase):
         self.sleep(60)
         shell.start_server()
         self.sleep(30)
-        for server in self.servers:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+        status = x509main(self.master)._validate_ssl_login(self.servers)
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_node_with_cert_non_master(self):
         rest = RestConnection(self.master)
@@ -327,9 +319,8 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        for server in self.servers[:3]:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code for ip - {0}".format(server.ip))
+        status = x509main(self.master)._validate_ssl_login(self.servers[:3])
+        self.assertEqual(status,200,"Not able to login via SSL code ")
 
     #simple xdcr with ca cert
     def test_basic_xdcr_with_cert(self):
