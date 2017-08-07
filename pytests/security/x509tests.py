@@ -41,9 +41,17 @@ class x509tests(BaseTestCase):
 
     def _reset_original(self):
         self.log.info ("Reverting to original state - regenerating certificate and removing inbox folder")
+        tmp_path = "/tmp/abcd.pem"
         for servers in self.servers:
-            rest = RestConnection(servers)
-            rest.regenerate_cluster_certificate()
+            #rest = RestConnection(servers)
+            #rest.regenerate_cluster_certificate()
+            cli_command = "ssl-manage"
+            remote_client = RemoteMachineShellConnection(servers)
+            options = "--regenerate-cert={0}".format(tmp_path)
+            output, error = remote_client.execute_couchbase_cli(cli_command=cli_command, options=options,
+                                                                cluster_host=servers.ip, user="Administrator",
+                                                                password="password")
+
             x509main(servers)._delete_inbox_folder()
 
     def checkConfig(self, eventID, host, expectedResults):
