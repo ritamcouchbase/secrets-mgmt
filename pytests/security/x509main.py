@@ -206,8 +206,6 @@ class x509main:
     def _validate_ssl_login(self,host=None,port=18091,username='Administrator',password='password'):
         key_file = x509main.CACERTFILEPATH + "/" + x509main.CAKEYFILE
         cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
-        if host is None:
-            host = self.host.ip
         i = 0;
         while i < 4:
             try:

@@ -208,8 +208,7 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-
-        status = x509main(self.servers)._validate_ssl_login()
+        status = x509main(self.master)._validate_ssl_login(self.server)
         self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_add_back_node_with_cert(self,rebalance=None):
