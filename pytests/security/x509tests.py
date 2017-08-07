@@ -32,10 +32,11 @@ class x509tests(BaseTestCase):
                 self.sleep(30)
 
     def tearDown(self):
-        self._reset_original()
-        shell = RemoteMachineShellConnection(x509main.SLAVE_HOST)
-        shell.execute_command("rm " + x509main.CACERTFILEPATH)
-        super(x509tests, self).tearDown()
+        #self._reset_original()
+        #shell = RemoteMachineShellConnection(x509main.SLAVE_HOST)
+        #shell.execute_command("rm " + x509main.CACERTFILEPATH)
+        #super(x509tests, self).tearDown()
+        print "est"
 
 
     def _reset_original(self):
@@ -58,6 +59,7 @@ class x509tests(BaseTestCase):
         self.assertTrue(valueVerification, "Values for one of the fields is not matching")
 
     def getLocalIPAddress(self):
+        '''
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('couchbase.com', 0))
         return s.getsockname()[0]
@@ -66,7 +68,6 @@ class x509tests(BaseTestCase):
         if '1' not in ipAddress:
             status, ipAddress = commands.getstatusoutput("ifconfig eth0 | grep  -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | awk '{print $2}'")
         return ipAddress
-        '''
 
 
     def createBulkDocuments(self,client):
@@ -206,9 +207,10 @@ class x509tests(BaseTestCase):
             known_nodes.append('ns_1@' + server.ip)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-        for server in self.servers:
-            status = x509main(server)._validate_ssl_login()
-            self.assertEqual(status,200,"Not able to login via SSL code")
+
+
+        status = x509main(self.servers)._validate_ssl_login()
+        self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_add_back_node_with_cert(self,rebalance=None):
         rebalance = self.input.param('rebalance')

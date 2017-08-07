@@ -208,11 +208,10 @@ class x509main:
         cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
         if host is None:
             host = self.host.ip
-        r = None
-        while r == None:
+        i = 0;
+        while i < 4:
             try:
-                r = requests.get("https://"+host+":18091",verify=cert_file)
-                print "After getting requests"
+                r = requests.get("https://"+host[i].ip+":18091",verify=cert_file)
                 if r.status_code == 200:
                     header = {'Content-type': 'application/x-www-form-urlencoded'}
                     params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
@@ -222,6 +221,7 @@ class x509main:
                 log.info ("into exception form validate_ssl_login")
                 log.info (" Exception is {0}".format(ex))
                 time.sleep(5)
+                i = i +1
                 continue
 
 
