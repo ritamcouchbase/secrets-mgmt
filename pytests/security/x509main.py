@@ -209,7 +209,7 @@ class x509main:
         i = 0;
         while i < 4:
             try:
-                r = requests.get("https://"+host[i].ip+":18091",verify=cert_file)
+                r = requests.get("https://"+str(host[i].ip)+":18091",verify=cert_file)
                 if r.status_code == 200:
                     header = {'Content-type': 'application/x-www-form-urlencoded'}
                     params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
