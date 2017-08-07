@@ -213,7 +213,7 @@ class x509main:
                 if r.status_code == 200:
                     header = {'Content-type': 'application/x-www-form-urlencoded'}
                     params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
-                    r = requests.post("https://"+str(host[i].ip+":18091/uilogin",data=params,headers=header,verify=cert_file)
+                    r = requests.post("https://"+str(host[i].ip)+":18091/uilogin",data=params,headers=header,verify=cert_file)
                     return r.status_code
             except Exception, ex:
                 log.info ("into exception form validate_ssl_login")
