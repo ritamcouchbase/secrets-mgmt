@@ -202,7 +202,7 @@ class x509main:
         api = rest.baseUrl + url
         self._rest_upload_file(api,x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE,"Administrator",'password')
 
-
+    '''
     def _validate_ssl_login(self,host=None,port=18091,username='Administrator',password='password'):
         key_file = x509main.CACERTFILEPATH + "/" + x509main.CAKEYFILE
         cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
@@ -221,6 +221,24 @@ class x509main:
                 time.sleep(5)
                 i = i +1
                 continue
+    '''
+
+    def _validate_ssl_login(self, host=None, port=18091, username='Administrator', password='password'):
+        key_file = x509main.CACERTFILEPATH + "/" + x509main.CAKEYFILE
+        cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
+        if host is None:
+            host = self.host.ip
+        try:
+            r = requests.get("https://" + host + ":18091", verify=cert_file)
+            if r.status_code == 200:
+                header = {'Content-type': 'application/x-www-form-urlencoded'}
+                params = urllib.urlencode({'user': '{0}'.format(username), 'password': '{0}'.format(password)})
+                r = requests.post("https://" + host + ":18091/uilogin", data=params, headers=header, verify=cert_file)
+                return r.status_code
+        except Exception, ex:
+            log.info("into exception form validate_ssl_login")
+            log.info(" Exception is {0}".format(ex))
+            return 'error'
 
 
     def _get_cluster_ca_cert(self):

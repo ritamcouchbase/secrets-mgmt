@@ -16,7 +16,7 @@ class x509tests(BaseTestCase):
     def setUp(self):
         super(x509tests, self).setUp()
         self._reset_original()
-        SSLtype = self.input.param("SSLtype","openssl")
+        SSLtype = self.input.param("SSLtype","go")
         encryption_type = self.input.param('encryption_type',"")
         key_length=self.input.param("key_length",1024)
         x509main(self.master)._generate_cert(self.servers,type=SSLtype,encryption=encryption_type,key_length=key_length)
