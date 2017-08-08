@@ -16,7 +16,7 @@ class x509tests(BaseTestCase):
     def setUp(self):
         super(x509tests, self).setUp()
         self._reset_original()
-        SSLtype = self.input.param("SSLtype","go")
+        SSLtype = self.input.param("SSLtype","openssl")
         encryption_type = self.input.param('encryption_type',"")
         key_length=self.input.param("key_length",1024)
         x509main(self.master)._generate_cert(self.servers,type=SSLtype,encryption=encryption_type,key_length=key_length)
@@ -48,7 +48,6 @@ class x509tests(BaseTestCase):
             output, error = remote_client.execute_couchbase_cli(cli_command=cli_command, options=options,
                                                                 cluster_host=servers.ip, user="Administrator",
                                                                 password="password")
-
             x509main(servers)._delete_inbox_folder()
 
     def checkConfig(self, eventID, host, expectedResults):
@@ -64,7 +63,6 @@ class x509tests(BaseTestCase):
         self.assertTrue(valueVerification, "Values for one of the fields is not matching")
 
     def getLocalIPAddress(self):
-        '''
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('couchbase.com', 0))
         return s.getsockname()[0]
@@ -73,6 +71,7 @@ class x509tests(BaseTestCase):
         if '1' not in ipAddress:
             status, ipAddress = commands.getstatusoutput("ifconfig eth0 | grep  -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | awk '{print $2}'")
         return ipAddress
+        '''
 
 
     def createBulkDocuments(self,client):
@@ -117,19 +116,19 @@ class x509tests(BaseTestCase):
         self.add_built_in_server_user([{'id': bucket, 'name': bucket,'password': 'password'}], \
                                       [{'id': bucket, 'name': bucket,'roles': 'admin'}], self.master)
         connection_string = 'couchbases://'+ host_ip + '/' + bucket + '?certpath='+root_ca_path
-        print connection_string
+        self.log.info("Connection string is -{0}".format(connection_string))
         try:
             cb = Bucket(connection_string, password='password')
             if cb is not None:
                 result = True
                 return result, cb
         except Exception, ex:
-            print ex
+            self.log.info("Expection is  -{0}".format(ex))
             return result
 
     def test_basic_ssl_test(self):
         x509main(self.master).setup_master()
-        status = x509main(self.master)._validate_ssl_login([self.master])
+        status = x509main(self.master)._validate_ssl_login()
         self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_get_cluster_ca(self):
@@ -149,7 +148,7 @@ class x509tests(BaseTestCase):
         servs_inout = self.servers[1]
         rest.add_node('Administrator','password',servs_inout.ip)
         for server in self.servers[:2]:
-            status, content, header = x509main(self.master)._get_cluster_ca_cert()
+            status, content, header = x509main(server)._get_cluster_ca_cert()
             content = json.loads(content)
             self.assertTrue(status,"Issue while Cluster CA Cert")
             self.assertEqual(content['cert']['type'],"uploaded","Type of certificate is mismatch")
@@ -212,9 +211,9 @@ class x509tests(BaseTestCase):
             known_nodes.append('ns_1@' + server.ip)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-
-        status = x509main(self.master)._validate_ssl_login(self.servers)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in self.servers:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_add_back_node_with_cert(self,rebalance=None):
         rebalance = self.input.param('rebalance')
@@ -229,8 +228,9 @@ class x509tests(BaseTestCase):
             known_nodes.append('ns_1@' + server.ip)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-        status = x509main(self.master)._validate_ssl_login(servs_inout)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in servs_inout:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
         rest.fail_over(serv_out,graceful=False)
         if (rebalance):
             rest.rebalance(known_nodes,[serv_out])
@@ -240,8 +240,9 @@ class x509tests(BaseTestCase):
             rest.add_back_node(serv_out)
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
-        response = x509main(self.master)._validate_ssl_login(servs_inout)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in servs_inout:
+            response = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_graceful_add_back_node_with_cert(self,recovery_type=None):
         recovery_type = self.input.param('recovery_type')
@@ -263,8 +264,9 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        status = x509main(self.master)._validate_ssl_login(servs_inout)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in servs_inout:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
 
         rest.fail_over(serv_out,graceful=True)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
@@ -273,8 +275,9 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        status = x509main(self.master)._validate_ssl_login(servs_inout)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in servs_inout:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_remove_autofailover(self):
         rest = RestConnection(self.master)
@@ -298,8 +301,9 @@ class x509tests(BaseTestCase):
         self.sleep(60)
         shell.start_server()
         self.sleep(30)
-        status = x509main(self.master)._validate_ssl_login(self.servers)
-        self.assertEqual(status,200,"Not able to login via SSL code")
+        for server in self.servers:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code")
 
     def test_add_node_with_cert_non_master(self):
         rest = RestConnection(self.master)
@@ -319,8 +323,9 @@ class x509tests(BaseTestCase):
         rest.rebalance(known_nodes)
         self.assertTrue(self.check_rebalance_complete(rest),"Issue with rebalance")
 
-        status = x509main(self.master)._validate_ssl_login(self.servers[:3])
-        self.assertEqual(status,200,"Not able to login via SSL code ")
+        for server in self.servers[:3]:
+            status = x509main(server)._validate_ssl_login()
+            self.assertEqual(status,200,"Not able to login via SSL code for ip - {0}".format(server.ip))
 
     #simple xdcr with ca cert
     def test_basic_xdcr_with_cert(self):
@@ -613,7 +618,7 @@ class x509tests(BaseTestCase):
             if cb is not None:
                 result = True
         except Exception, ex:
-            print ex
+            self.log.info("Exception is -{0}".format(ex))
         self.assertTrue(result,"Cannot create a client connection with server")
 
         create_docs = Thread(name='create_docs', target=self.createBulkDocuments, args=(cb,))
@@ -675,14 +680,14 @@ class x509_upgrade(NewUpgradeBaseTest):
         self.add_built_in_server_user([{'id': bucket, 'name': bucket, 'password': 'password'}], \
                                       [{'id': bucket, 'name': bucket, 'roles': 'admin'}], self.master)
         connection_string = 'couchbases://'+ host_ip + '/' + bucket + '?certpath='+root_ca_path
-        print connection_string
+        self.log.info("Connection string is -{0}".format(connection_string))
         try:
             cb = Bucket(connection_string, passsword='password')
             if cb is not None:
                 result = True
                 return result, cb
         except Exception, ex:
-            print ex
+            self.log.info("Exception is  -{0}".format(ex))
             return result
 
 
