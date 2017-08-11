@@ -175,7 +175,8 @@ class SecretsMasterBase():
 
     def restart_server_with_env(self,host,password):
         shell = RemoteMachineShellConnection(host)
-        shell.set_environment_variable("CB_MASTER_PASSWORD",'\'' + password + '\'')
+        shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; /etc/init.d/couchbase-server restart")
+
 
     def correct_password_on_prompt(self,host,password,cmd):
         result = True

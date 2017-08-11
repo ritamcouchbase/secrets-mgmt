@@ -55,16 +55,12 @@ class SecretsMgmtTests(BaseTestCase):
         shell = RemoteMachineShellConnection(self.master)
         o, _ = shell.execute_command("ps aux | grep 'memcached'  | awk '{print $2}'")
         mem_pid = o[0]
-        print mem_pid
         shell.disconnect()
 
 
     def test_evn_variable(self):
-        self.print_memcached_ip()
         self.secretmgmt_base_obj.set_password(self.master,self.password)
         self.secretmgmt_base_obj.restart_server_with_env(self.master,self.password)
-        self.sleep(120)
-        self.print_memcached_ip()
         temp_return = self.secretmgmt_base_obj.check_log_files(self.master,"/babysitter.log","Booted")
         self.assertTrue(temp_return,"Babysitter.log does not contain node initialization code")
 
