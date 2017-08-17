@@ -2841,7 +2841,7 @@ class FTSBaseTest(unittest.TestCase):
     def __is_cluster_run(self):
         return len(set([server.ip for server in self._input.servers])) == 1
 
-    def _setup_node_secret(self, secret_password):
+    def _setup_node_secret(self, secret_password=''):
         for server in self._input.servers:
             SecretsMasterBase(server).setup_pass_node(server, secret_password)
 
@@ -2854,7 +2854,7 @@ class FTSBaseTest(unittest.TestCase):
                 self.fail("Errors found in logs : {0}".format(error_logger))
 
         if self.enable_secrets:
-            `self._setup_node_secret("")
+            self._setup_node_secret()
 
         if self._input.param("negative_test", False):
             if hasattr(self, '_resultForDoCleanups') \
