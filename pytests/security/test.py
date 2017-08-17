@@ -528,7 +528,7 @@ class rbac_upgrade(UpgradeTests):
             self.log.info("-------------------- CHECK MEMCACHED FOR OLD USERS -----------------------------")
             self.test_memcached_connection(self.master.ip, self.pre_upgrade_user, self.pre_upgrade_user_role)
             self.log.info("-------------------- CHECK ROLES FOR OLD USERS -----------------------------")
-                self.check_roles(self.pre_upgrade_user_role, current_roles)
+            self.check_roles(self.pre_upgrade_user_role, current_roles)
             self.sleep(30)
         #5 Change roles for pre-upgrade users
             self.log.info("-------------------- CHANGE ROLES OLD USERS -----------------------------")
