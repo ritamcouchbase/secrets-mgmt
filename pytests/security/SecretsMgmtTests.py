@@ -422,14 +422,14 @@ class SecretsMgmtTests(BaseTestCase):
         bucket_type = self.input.param("bucket_type",'standard')
         tasks = []
         if bucket_type == 'sasl':
-            self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas, bucket_size)
+            self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas)
         elif bucket_type == 'standard':
             self.cluster.create_standard_bucket(self.master, bucket_name, STANDARD_BUCKET_PORT + 1,
-                                                bucket_size, num_replicas)
+                                                bucket_size)
         elif bucket_type == "memcached":
             tasks.append(
                 self.cluster.async_create_memcached_bucket(self.master, bucket_name, STANDARD_BUCKET_PORT + 1,
-                                                           bucket_size, num_replicas))
+                                                           bucket_size))
             for task in tasks:
                 self.assertTrue(task.result(),"Issue with bucket creation")
         else:
