@@ -419,10 +419,12 @@ class SecretsMgmtTests(BaseTestCase):
     def test_bucket_create_password(self,bucket_name='secretsbucket', num_replicas=1,bucket_size=100):
         for servers in self.servers:
             self.secretmgmt_base_obj.setup_pass_node(servers, self.password)
-        bucket_type = self.input.param("bucket_type",'standard')
+        bucket_type = self.input.param("bucket_type",'couchbase')
         tasks = []
-        if bucket_type == 'sasl':
-            self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas)
+        if bucket_type == 'couchbase':
+            #self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas)
+            rest = RestConnection(self.master)
+            rest.create_bucket(bucket_name,ramQuotaMB=100)
         elif bucket_type == 'standard':
             self.cluster.create_standard_bucket(self.master, bucket_name, STANDARD_BUCKET_PORT + 1,
                                                 bucket_size)
