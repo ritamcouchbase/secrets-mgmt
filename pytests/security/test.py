@@ -490,12 +490,13 @@ class rbac_upgrade(UpgradeTests):
                 self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
                 self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
 
-        if pass_updated is None:
+        if pass_updated is None and self.initial_version[0:5] != '3.1.5':
             self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
             self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
 
-        self.execute_query(None, None, bucket='afterupgrade01', password='p@ssword')
-        self.execute_query(None, None, bucket='afterupgrade02', password='p@ssword')
+        if self.initial_version[0:5] != '3.1.5':
+            self.execute_query(None, None, bucket='afterupgrade01', password='p@ssword')
+            self.execute_query(None, None, bucket='afterupgrade02', password='p@ssword')
 
     def post_upgrade(self, simple=None, online=None):
         # 1. Create new bucket and users in the application
