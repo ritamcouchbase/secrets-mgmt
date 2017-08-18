@@ -150,11 +150,11 @@ class SecretsMgmtTests(BaseTestCase):
         new_pass = self.input.param("new_password","new_p@ssw0rd")
         self.secretmgmt_base_obj.set_password(self.master, self.password)
         self.secretmgmt_base_obj.restart_server_with_env(self.master, self.password)
-        temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Initialization")
+        temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Booted")
         self.assertTrue(temp_result,"Babysitter.log does not contain node initialization code")
         self.secretmgmt_base_obj.set_password(self.master, new_pass)
         self.secretmgmt_base_obj.restart_server_with_env(self.master, new_pass)
-        temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Initialization")
+        temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Booted")
         self.assertTrue(temp_result, "Babysitter.log does not contain node initialization code")
 
 
@@ -481,10 +481,12 @@ class SecretsMgmtTests(BaseTestCase):
         self.assertTrue(temp_result, "Babysitter.log does not contain node initialization code")
 
     def test_cbcollect(self):
+        rest = RestConnection(self.master)
         bucket_name = 'cbcollectbucket'
         num_replicas = 1
         bucket_size = 100
-        self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas, bucket_size)
+        #self.cluster.create_sasl_bucket(self.master, bucket_name, self.password, num_replicas, bucket_size)
+        rest.create_bucket(bucket_name, ramQuotaMB=100)
         result = self.secretmgmt_base_obj.generate_cb_collect(self.master,"cbcollect.zip",self.password)
         self.assertTrue(result,"Bucket password appears in the cbcollect info")
 

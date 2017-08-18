@@ -93,7 +93,6 @@ class SecretsMasterBase():
         chan.send(cmd + "\n")
         time.sleep(10)
         resp = chan.recv(9999)
-
         chan.send(new_password + "\n")
         time.sleep(10)
         resp = chan.recv(9999)
@@ -434,7 +433,7 @@ class SecretsMasterBase():
         self.rotate_data_key(host)
         change_output, change_error = shell.execute_command(
             "/opt/couchbase/bin/cbdump-config /opt/couchbase/var/lib/couchbase/config/config.dat")
-        if ((output[8] != change_output[8]) and (output[9] != change_output[9])):
+        if (output[9] != change_output[9]):
             return True
         else:
             return False
