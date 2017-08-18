@@ -469,13 +469,12 @@ class rbac_upgrade(UpgradeTests):
         self.log.info("Password Updated is ----------{0}".format(pass_updated))
         if online is True and pass_updated is not None:
             self.log.info ("First Condition")
-            self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
-            self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
-            self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
+            if self.local_initial_version[0:5] != '3.1.5':
+                self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
+                self.execute_query(None, None, bucket='beforeupgadesimple',password='p@ssword')
+                self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is True and pass_updated is None:
             self.log.info("Second Condition")
-            print self.local_initial_version[0:5]
-            print type(self.local_initial_version[0:5])
             if self.local_initial_version[0:5] != '3.1.5':
                 self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                    bucket='beforeupgadesimple')
@@ -485,8 +484,6 @@ class rbac_upgrade(UpgradeTests):
                 self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
         elif online is None and pass_updated is None:
             self.log.info("Third Condition")
-            print self.local_initial_version[0:5]
-            print type(self.local_initial_version[0:5])
             if self.local_initial_version[0:5] != '3.1.5':
                 self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
                 self.execute_query(None, None, bucket='beforeupgadesimple')
