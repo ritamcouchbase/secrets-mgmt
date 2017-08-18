@@ -167,6 +167,9 @@ class rbac_upgrade(UpgradeTests):
             {'id': 'beforeupgadesimple', 'name': 'beforeupgadesimple', 'roles': 'bucket_full_access[beforeupgadesimple]',
              'action_list': 'bucket_full_access', 'bucket': 'beforeupgadesimple'}]
 
+        print self.initial_version[0:5]
+        print type(self.initial_version[0:5])
+
         if self.initial_version[0:5] != '3.1.5':
             change_role_pre_upg_user.append( {'id': 'travel-sample', 'name': 'travel-sample', 'password': 'p@ssword'} )
             change_role_pre_upgrade_data.append({'id': 'travel-sample', 'name': 'travel-sample', 'roles': 'bucket_full_access[travel-sample]',
@@ -470,12 +473,15 @@ class rbac_upgrade(UpgradeTests):
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is True and pass_updated is None:
             self.log.info("Second Condition")
-            self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
-                               bucket='beforeupgadesimple')
-            self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
-                               bucket='beforeupgadesasl', password='p@ssword')
-            self.execute_query(None, None, bucket='beforeupgadesimple')
-            self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
+            print self.initial_version[0:5]
+            print type(self.initial_version[0:5])
+            if self.initial_version[0:5] != '3.1.5':
+                self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
+                                   bucket='beforeupgadesimple')
+                self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
+                                   bucket='beforeupgadesasl', password='p@ssword')
+                self.execute_query(None, None, bucket='beforeupgadesimple')
+                self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
         elif online is None and pass_updated is None:
             self.log.info("Third Condition")
             print self.initial_version[0:5]
