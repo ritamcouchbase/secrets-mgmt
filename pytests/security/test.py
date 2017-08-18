@@ -26,6 +26,7 @@ class rbac_upgrade(UpgradeTests):
         self.post_upgrade_user = ''
         self.post_upgrade_user_role = ''
         self.num_items = self.input.param('num_items',10000)
+        self.local_initial_version = self.initial_version
 
     def tearDown(self):
         super(rbac_upgrade, self).tearDown()
@@ -167,10 +168,10 @@ class rbac_upgrade(UpgradeTests):
             {'id': 'beforeupgadesimple', 'name': 'beforeupgadesimple', 'roles': 'bucket_full_access[beforeupgadesimple]',
              'action_list': 'bucket_full_access', 'bucket': 'beforeupgadesimple'}]
 
-        print self.initial_version[0:5]
-        print type(self.initial_version[0:5])
+        print self.local_initial_version[0:5]
+        print type(self.local_initial_version[0:5])
 
-        if self.initial_version[0:5] != '3.1.5':
+        if self.local_initial_version[0:5] != '3.1.5':
             change_role_pre_upg_user.append( {'id': 'travel-sample', 'name': 'travel-sample', 'password': 'p@ssword'} )
             change_role_pre_upgrade_data.append({'id': 'travel-sample', 'name': 'travel-sample', 'roles': 'bucket_full_access[travel-sample]',
              'action_list': 'bucket_full_access', 'bucket': 'travel-sample'})
@@ -318,7 +319,7 @@ class rbac_upgrade(UpgradeTests):
                     else:
                         self.log.info("Result of action - {0} is {1} -- {2}".format(action, result_action, temp_action[1]))
                         self.assertFalse(True)
-                    
+
     def createBulkDocuments(self,bucket,password=None,start_num=0,end_num=10000,input_key='demo_key'):
         if password is not None:
             result, client = self._sdk_connection(bucket, host_ip=self.host_ip, password=password)
@@ -415,8 +416,8 @@ class rbac_upgrade(UpgradeTests):
         thread_list.append(create_docs_simple)
         thread_list.append(create_docs_sasl)
 
-        self.log.info ("Intial -version is ----------{0}".format(self.initial_version[0:5]))
-        if self.initial_version[0:5] != '3.1.5':
+        self.log.info ("Intial -version is ----------{0}".format(self.local_initial_version[0:5]))
+        if self.local_initial_version[0:5] != '3.1.5':
             rest.load_sample("travel-sample")
             self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                bucket='beforeupgadesimple')
@@ -473,9 +474,9 @@ class rbac_upgrade(UpgradeTests):
             self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is True and pass_updated is None:
             self.log.info("Second Condition")
-            print self.initial_version[0:5]
-            print type(self.initial_version[0:5])
-            if self.initial_version[0:5] != '3.1.5':
+            print self.local_initial_version[0:5]
+            print type(self.local_initial_version[0:5])
+            if self.local_initial_version[0:5] != '3.1.5':
                 self.execute_query(query='CREATE INDEX simple_name ON beforeupgadesimple(name)', ddl='Yes',
                                    bucket='beforeupgadesimple')
                 self.execute_query(query='CREATE INDEX sasl_name ON beforeupgadesasl(name)', ddl='Yes',
@@ -484,25 +485,25 @@ class rbac_upgrade(UpgradeTests):
                 self.execute_query(None, None, bucket='beforeupgadesasl',password='p@ssword')
         elif online is None and pass_updated is None:
             self.log.info("Third Condition")
-            print self.initial_version[0:5]
-            print type(self.initial_version[0:5])
-            if self.initial_version[0:5] != '3.1.5':
+            print self.local_initial_version[0:5]
+            print type(self.local_initial_version[0:5])
+            if self.local_initial_version[0:5] != '3.1.5':
                 self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample')
                 self.execute_query(None, None, bucket='beforeupgadesimple')
                 self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
         elif online is None and pass_updated is not None:
             self.log.info("Fourth Condition")
-            if self.initial_version[0:5] != '3.1.5':
+            if self.local_initial_version[0:5] != '3.1.5':
                 self.execute_query("select city from `travel-sample` where city is not NULL", None, bucket='travel-sample',
                                password='p@ssword')
                 self.execute_query(None, None, bucket='beforeupgadesimple', password='p@ssword')
                 self.execute_query(None, None, bucket='beforeupgadesasl', password='p@ssword')
 
-        if pass_updated is None and self.initial_version[0:5] != '3.1.5':
+        if pass_updated is None and self.local_initial_version[0:5] != '3.1.5':
             self.execute_query(None, ddl='Yes', bucket='afterupgrade01', password='p@ssword')
             self.execute_query(None, ddl='Yes', bucket='afterupgrade02', password='p@ssword')
 
-        if self.initial_version[0:5] != '3.1.5':
+        if self.local_initial_version[0:5] != '3.1.5':
             self.execute_query(None, None, bucket='afterupgrade01', password='p@ssword')
             self.execute_query(None, None, bucket='afterupgrade02', password='p@ssword')
 
