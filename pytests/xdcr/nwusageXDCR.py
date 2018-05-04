@@ -17,6 +17,15 @@ class nwusage(XDCRNewBaseTest):
     def tearDown(self):
         super(nwusage, self).tearDown()
 
+    def _set_nwusage_limit(self, cluster, nw_limit=0):
+        repl_id = cluster.get_remote_clusters()[0].get_replications()[0].get_repl_id()
+        shell = RemoteMachineShellConnection(cluster.get_master_node())
+        repl_id = str(repl_id).replace('/','%2F')
+        base_url = "http://" + cluster.get_master_node().ip + ":8091/settings/replications/" + repl_id
+        command = "curl -X POST -u Administrator:password " + base_url + " -d networkUsageLimit=" + str(nw_limit)
+        output, error = shell.execute_command(command)
+        shell.log_command_output(output, error)
+
     def _verify_bandwidth_usage(self, node, nw_limit=1, no_of_nodes=2, event_time=None,
                                 nw_usage="[1-9][0-9]*", end_time=None):
         goxdcr_log = NodeHelper.get_goxdcr_log_dir(node) + '/goxdcr.log'
@@ -64,11 +73,19 @@ class nwusage(XDCRNewBaseTest):
                 else:
                     self.fail("Bandwidth Throttler not enabled on replication")
 
+    def _get_current_time(self, server):
+        shell = RemoteMachineShellConnection(server)
+        command = "date +'%Y-%m-%dT%H:%M:%S'"
+        output, error = shell.execute_command(command)
+        shell.log_command_output(output, error)
+        curr_time = output[0].strip()
+        return curr_time
+
     def test_nwusage_with_unidirection(self):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         gen_create = BlobGenerator('nwOne', 'nwOne', self._value_size, end=self._num_items)
         self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_create)
@@ -82,8 +99,8 @@ class nwusage(XDCRNewBaseTest):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
-        self.dest_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
+        self._set_nwusage_limit(self.dest_cluster, nw_limit)
 
         gen_create1 = BlobGenerator('nwOne', 'nwOne', self._value_size, end=self._num_items)
         self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_create1)
@@ -105,7 +122,7 @@ class nwusage(XDCRNewBaseTest):
         self.src_cluster.pause_all_replications()
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         self.src_cluster.resume_all_replications()
 
@@ -129,8 +146,8 @@ class nwusage(XDCRNewBaseTest):
         self.dest_cluster.pause_all_replications()
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
-        self.dest_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
+        self._set_nwusage_limit(self.dest_cluster, nw_limit)
 
         self.src_cluster.resume_all_replications()
         self.dest_cluster.resume_all_replications()
@@ -151,7 +168,7 @@ class nwusage(XDCRNewBaseTest):
         tasks = self.src_cluster.async_load_all_buckets_from_generator(kv_gen=gen_create)
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         for task in tasks:
             task.result()
@@ -170,8 +187,8 @@ class nwusage(XDCRNewBaseTest):
         tasks.extend(self.dest_cluster.async_load_all_buckets_from_generator(kv_gen=gen_create2))
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
-        self.dest_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
+        self._set_nwusage_limit(self.dest_cluster, nw_limit)
 
         for task in tasks:
             task.result()
@@ -186,7 +203,7 @@ class nwusage(XDCRNewBaseTest):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         gen_create = BlobGenerator('nwOne', 'nwOne', self._value_size, end=self._num_items)
         self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_create)
@@ -202,7 +219,7 @@ class nwusage(XDCRNewBaseTest):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         gen_create = BlobGenerator('nwOne', 'nwOne', self._value_size, end=self._num_items)
         self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_create)
@@ -218,14 +235,14 @@ class nwusage(XDCRNewBaseTest):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         gen_create = BlobGenerator('nwOne', 'nwOne', self._value_size, end=self._num_items)
         tasks = self.src_cluster.async_load_all_buckets_from_generator(kv_gen=gen_create)
 
         self.sleep(30)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", 0)
-        event_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        self._set_nwusage_limit(self.src_cluster, 0)
+        event_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Network limit reset to 0 at {0}".format(event_time))
 
         for task in tasks:
@@ -239,7 +256,7 @@ class nwusage(XDCRNewBaseTest):
         self.setup_xdcr()
         self.sleep(60)
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         self.src_cluster.pause_all_replications()
 
@@ -251,13 +268,13 @@ class nwusage(XDCRNewBaseTest):
         self.sleep(15)
 
         self.src_cluster.failover_and_rebalance_nodes()
-        failover_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        failover_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node failed over at {0}".format(failover_time))
 
         self.sleep(15)
 
         self.src_cluster.rebalance_in()
-        node_back_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        node_back_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node added back at {0}".format(node_back_time))
 
         self._wait_for_replication_to_catchup()
@@ -284,14 +301,14 @@ class nwusage(XDCRNewBaseTest):
         self.sleep(15)
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
-        bw_enable_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
+        bw_enable_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Bandwidth throttler enabled at {0}".format(bw_enable_time))
 
         self.sleep(60)
 
         self.src_cluster.rebalance_in()
-        node_back_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        node_back_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node added back at {0}".format(node_back_time))
 
         self._wait_for_replication_to_catchup(timeout=600)
@@ -306,7 +323,7 @@ class nwusage(XDCRNewBaseTest):
         self.src_cluster.rebalance_in()
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
 
         src_conn = RestConnection(self.src_cluster.get_master_node())
         src_conn.update_autofailover_settings(enabled=True, timeout=30)
@@ -325,7 +342,7 @@ class nwusage(XDCRNewBaseTest):
         self.sleep(30)
         task = self.cluster.async_rebalance(self.src_cluster.get_nodes(), [], [])
         task.result()
-        failover_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        failover_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node auto failed over at {0}".format(failover_time))
         FloatingServers._serverlist.append(self._input.servers[1])
 
@@ -335,7 +352,7 @@ class nwusage(XDCRNewBaseTest):
         shell.disable_firewall()
         self.sleep(45)
         self.src_cluster.rebalance_in()
-        node_back_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        node_back_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node added back at {0}".format(node_back_time))
 
         self._wait_for_replication_to_catchup(timeout=600)
@@ -369,8 +386,8 @@ class nwusage(XDCRNewBaseTest):
         self.sleep(15)
 
         nw_limit = self._input.param("nw_limit", 1)
-        self.src_cluster.set_xdcr_param("networkUsageLimit", nw_limit)
-        bw_enable_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        self._set_nwusage_limit(self.src_cluster, nw_limit)
+        bw_enable_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Bandwidth throttler enabled at {0}".format(bw_enable_time))
 
         self.sleep(60)
@@ -379,7 +396,7 @@ class nwusage(XDCRNewBaseTest):
         shell.disable_firewall()
         self.sleep(30)
         self.src_cluster.rebalance_in()
-        node_back_time = time.strftime('%Y-%m-%dT%H:%M:%S')
+        node_back_time = self._get_current_time(self.src_cluster.get_master_node())
         self.log.info("Node added back at {0}".format(node_back_time))
 
         self._wait_for_replication_to_catchup(timeout=600)

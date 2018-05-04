@@ -37,7 +37,11 @@ class NewUpgradeBaseTest(BaseTestCase):
         self.released_versions = ["2.0.0-1976-rel", "2.0.1", "2.5.0", "2.5.1",
                                   "2.5.2", "3.0.0", "3.0.1",
                                   "3.0.1-1444", "3.0.2", "3.0.2-1603", "3.0.3",
-                                  "3.1.0", "3.1.1", "3.1.2", "3.1.3"]
+                                  "3.1.0", "3.1.0-1776", "3.1.1", "3.1.1-1807",
+                                  "3.1.2", "3.1.2-1815", "3.1.3", "3.1.3-1823",
+                                  "4.0.0", "4.0.0-4051", "4.1.0", "4.1.0-5005",
+                                  "4.5.0", "4.5.0-2601", "4.5.1", "4.5.1-2817",
+                                  "4.6.0", "4.6.0-3573", '4.6.2', "4.6.2-3905"]
         self.use_hostnames = self.input.param("use_hostnames", False)
         self.product = self.input.param('product', 'couchbase-server')
         self.initial_version = self.input.param('initial_version', '2.5.1-1083')
@@ -172,8 +176,19 @@ class NewUpgradeBaseTest(BaseTestCase):
         if self.product in ["couchbase", "couchbase-server", "cb"]:
             success = True
             for server in servers:
-                success &= RemoteMachineShellConnection(server).is_couchbase_installed()
+                shell = RemoteMachineShellConnection(server)
+                info = shell.extract_remote_info()
+                success &= shell.is_couchbase_installed()
                 self.sleep(5, "sleep 5 seconds to let cb up completely")
+                ready = RestHelper(RestConnection(server)).is_ns_server_running(60)
+                if not ready:
+                    if "cento 7" in info.distribution_version.lower():
+                        self.log.info("run systemctl daemon-reload")
+                        shell.execute_command("systemctl daemon-reload", debug=False)
+                        shell.start_server()
+                    else:
+                        log.error("Couchbase-server did not start...")
+                shell.disconnect()
                 if not success:
                     sys.exit("some nodes were not install successfully!")
         if self.rest is None:
@@ -299,7 +314,7 @@ class NewUpgradeBaseTest(BaseTestCase):
             queue.put(True)
 
     def _async_update(self, upgrade_version, servers, queue=None, skip_init=False):
-        self.log.info("servers {0} will be upgraded to {1} version".
+        self.log.info("\n\n*** servers {0} will be upgraded to {1} version ***\n".
                       format([server.ip for server in servers], upgrade_version))
         q = queue or self.queue
         upgrade_threads = []
@@ -583,6 +598,34 @@ class NewUpgradeBaseTest(BaseTestCase):
                 self.rest_helper = RestHelper(self.rest)
             self.log.info("No need to do DCP rebalance upgrade")
 
+    def _offline_upgrade(self, skip_init=False):
+        try:
+            self.log.info("offline_upgrade")
+            stoped_nodes = self.servers[:self.nodes_init]
+            for upgrade_version in self.upgrade_versions:
+                self.sleep(self.sleep_time, "Pre-setup of old version is done. "
+                        " Wait for upgrade to {0} version".format(upgrade_version))
+                for server in stoped_nodes:
+                    remote = RemoteMachineShellConnection(server)
+                    remote.stop_server()
+                    remote.disconnect()
+                self.sleep(self.sleep_time)
+                upgrade_threads = self._async_update(upgrade_version, stoped_nodes,
+                                                     None, skip_init)
+                for upgrade_thread in upgrade_threads:
+                    upgrade_thread.join()
+                success_upgrade = True
+                while not self.queue.empty():
+                    success_upgrade &= self.queue.get()
+                if not success_upgrade:
+                    self.fail("Upgrade failed!")
+                self.dcp_rebalance_in_offline_upgrade_from_version2()
+            """ set install cb version to upgrade version after done upgrade """
+            self.initial_version = self.upgrade_versions[0]
+        except Exception, ex:
+            self.log.info(ex)
+            raise
+
     def dcp_rebalance_in_offline_upgrade_from_version2(self):
         if self.input.param('initial_version', '')[:5] in COUCHBASE_VERSION_2 and \
            (self.input.param('upgrade_version', '')[:5] in COUCHBASE_VERSION_3 or \
@@ -740,3 +783,13 @@ class NewUpgradeBaseTest(BaseTestCase):
                     end=self.ops_dist_map[key]["end"],
                     start=self.ops_dist_map[key]["start"])
         return gen_docs_map
+
+    def _convert_server_map(self, servers):
+        map = {}
+        for server in servers:
+            key  = self._gen_server_key(server)
+            map[key] = server
+        return map
+
+    def _gen_server_key(self, server):
+        return "{0}:{1}".format(server.ip, server.port)

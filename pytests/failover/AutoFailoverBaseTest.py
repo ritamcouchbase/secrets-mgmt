@@ -309,6 +309,7 @@ class AutoFailoverBaseTest(BaseTestCase):
         for node in self.server_to_fail:
             node_failure_timer_task = NodeDownTimerTask(node.ip, 11211)
             node_down_timer_tasks.append(node_failure_timer_task)
+        self.timeout_buffer += 3
         task = AutoFailoverNodesFailureTask(self.orchestrator,
                                             self.server_to_fail,
                                             "stop_memcached", self.timeout,
@@ -352,6 +353,7 @@ class AutoFailoverBaseTest(BaseTestCase):
             task.result()
         except Exception, e:
             self.fail("Exception: {}".format(e))
+        self.disable_firewall()
 
     def bring_back_failed_nodes_up(self):
         """

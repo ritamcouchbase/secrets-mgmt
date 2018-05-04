@@ -18,7 +18,7 @@ from couchbase_helper.analytics_helper import AnalyticsHelper
 from couchbase_helper.query_helper import QueryHelper
 from remote.remote_util import RemoteMachineShellConnection
 from lib.membase.helper.bucket_helper import BucketOperationHelper
-
+import random
 
 class RQGASTERIXTests(BaseTestCase):
     """ Class for defining tests for RQG base testing """
@@ -39,6 +39,7 @@ class RQGASTERIXTests(BaseTestCase):
         self.failure_record_path= self.input.param("failure_record_path","/tmp")
         self.use_mysql= self.input.param("use_mysql",True)
         self.joins = self.input.param("joins",False)
+        self.ansi_joins = self.input.param("ansi_joins", False)
         self.subquery = self.input.param("subquery",False)
         self.initial_loading_to_cb= self.input.param("initial_loading_to_cb",True)
         self.change_bucket_properties = self.input.param("change_bucket_properties",False)
@@ -92,6 +93,8 @@ class RQGASTERIXTests(BaseTestCase):
 
     def tearDown(self):
         super(RQGASTERIXTests, self).tearDown()
+        bucket_username = "cbadminbucket"
+        bucket_password = "password"
         data = 'use Default ;' + "\n"
         for bucket in self.buckets:
                 data += 'disconnect bucket {0} if connected;'.format(bucket.name) + "\n"
@@ -102,7 +105,7 @@ class RQGASTERIXTests(BaseTestCase):
         f.write(data)
         f.close()
         url = 'http://{0}:8095/analytics/service'.format(self.master.ip)
-        cmd = 'curl -s --data pretty=true --data-urlencode "statement@file.txt" ' + url
+        cmd = 'curl -s --data pretty=true --data-urlencode "statement@file.txt" ' + url + " -u " + bucket_username + ":" + bucket_password
         os.system(cmd)
         os.remove(filename)
 
@@ -136,7 +139,7 @@ class RQGASTERIXTests(BaseTestCase):
             self.sleep(10)
 
             # self.log.info("Increasing Indexer Memory Quota to {0}".format(self.indexer_memQuota))
-            # self.rest.set_indexer_memoryQuota(indexMemoryQuota=self.indexer_memQuota)
+            # self.rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=self.indexer_memQuota)
             # self.sleep(120)
         if self.change_bucket_properties:
             shell = RemoteMachineShellConnection(self.master)
@@ -227,22 +230,21 @@ class RQGASTERIXTests(BaseTestCase):
                     self._load_bulk_data_in_buckets_using_n1ql(bucket, self.record_db[bucket_name])
 
         data = 'use Default;' + "\n"
+        bucket_username = "cbadminbucket"
+        bucket_password = "password"
         for bucket in self.buckets:
-            bucket_username = "cbadminbucket"
-            bucket_password = "password"
-            data += 'create bucket {0} with {{"bucket":"{0}","nodes":"{1}"}} ;'.format(
+            data += 'create bucket {0} with {{"name":"{0}"}} ;'.format(
                 bucket.name, self.master.ip)
             data += 'create shadow dataset {1} on {0}; '.format(bucket.name,
                                                                 bucket.name + "_shadow")
-            data += 'connect bucket {0} with {{"username":"{1}","password":"{2}"}};'.format(
-                bucket.name, bucket_username, bucket_password)
+            data += 'connect bucket {0};'.format(bucket.name)
         #import pdb;pdb.set_trace()
         filename = "file.txt"
         f = open(filename,'w')
         f.write(data)
         f.close()
         url = 'http://{0}:8095/analytics/service'.format(self.master.ip)
-        cmd = 'curl -s --data pretty=true --data format=CLEAN_JSON --data-urlencode "statement@file.txt" ' + url
+        cmd = 'curl -s --data pretty=true --data format=CLEAN_JSON --data-urlencode "statement@file.txt" ' + url + " -u " + bucket_username + ":" + bucket_password
         os.system(cmd)
         os.remove(filename)
 
@@ -322,6 +324,7 @@ class RQGASTERIXTests(BaseTestCase):
             list = self.client._convert_template_query_info(
                     table_map = table_map,
                     n1ql_queries = list,
+                    ansi_joins = self.ansi_joins,
                     gen_expected_result = False)
 
             # Create threads and run the batch
@@ -431,8 +434,20 @@ class RQGASTERIXTests(BaseTestCase):
 
 
     def _run_queries_and_verify(self, n1ql_query = None, sql_query = None, expected_result = None):
+        if "NUMERIC_VALUE1" in n1ql_query:
+            limit = random.randint(2, 30)
+            n1ql_query = n1ql_query.replace("NUMERIC_VALUE1", str(limit))
+            sql_query = sql_query.replace("NUMERIC_VALUE1", str(limit))
+            if limit < 10:
+                offset = limit - 2
+            else:
+                offset = limit - 10
+            n1ql_query = n1ql_query.replace("NUMERIC_VALUE2", str(offset))
+            sql_query = sql_query.replace("NUMERIC_VALUE2", str(offset))
+            self.log.info(" SQL QUERY :: {0}".format(sql_query))
+            self.log.info(" N1QL QUERY :: {0}".format(n1ql_query))
+            
         self.log.info(" SQL QUERY :: {0}".format(sql_query))
-        self.log.info(" N1QL QUERY :: {0}".format(n1ql_query))
         result_run = {}
         # Run n1ql query
         hints = self.query_helper._find_hints(sql_query)
@@ -450,7 +465,7 @@ class RQGASTERIXTests(BaseTestCase):
                 columns, rows = self.client._execute_query(query = sql_query)
                 sql_result = self.client._gen_json_from_results(columns, rows)
             #self.log.info(sql_result)
-            self.log.info(" result from n1ql query returns {0} items".format(len(n1ql_result)))
+            self.log.info(" result from CBAS query returns {0} items".format(len(n1ql_result)))
             self.log.info(" result from sql query returns {0} items".format(len(sql_result)))
 
             if(len(n1ql_result)!=len(sql_result)):
@@ -459,7 +474,7 @@ class RQGASTERIXTests(BaseTestCase):
                         return {"success":True, "result": "Pass"}
                 return {"success":False, "result": str("different results")}
             try:
-                self.n1ql_helper._verify_results_rqg(sql_result = sql_result, n1ql_result = n1ql_result, hints = hints)
+                self.n1ql_helper._verify_results_rqg_new(sql_result = sql_result, n1ql_result = n1ql_result, hints = hints)
             except Exception, ex:
                 self.log.info(ex)
                 return {"success":False, "result": str(ex)}
@@ -622,7 +637,7 @@ class RQGASTERIXTests(BaseTestCase):
         # Analyze the results for the failure and assert on the run
         success, summary, result = self._test_result_analysis(result_queue)
         self.log.info(result)
-        self.dump_failure_data(failure_record_queue)
+#         self.dump_failure_data(failure_record_queue)
         self.assertTrue(success, summary)
 
     def _testrun_worker_new(self, input_queue , result_queue, failure_record_queue = None):

@@ -13,6 +13,7 @@ class BaseSecondaryIndexingTests(QueryTests):
 
     def setUp(self):
         super(BaseSecondaryIndexingTests, self).setUp()
+        self.ansi_join = self.input.param("ansi_join", False)
         self.index_lost_during_move_out = []
         self.verify_using_index_status = self.input.param("verify_using_index_status",False)
         self.use_replica_when_active_down = self.input.param("use_replica_when_active_down",True)
@@ -23,6 +24,7 @@ class BaseSecondaryIndexingTests(QueryTests):
         self.verify_query_result= self.input.param("verify_query_result",True)
         self.verify_explain_result= self.input.param("verify_explain_result",True)
         self.defer_build= self.input.param("defer_build",True)
+        self.build_index_after_create = self.input.param("build_index_after_create", True)
         self.run_query_with_explain= self.input.param("run_query_with_explain",True)
         self.run_query= self.input.param("run_query",True)
         self.graceful = self.input.param("graceful",False)
@@ -63,12 +65,13 @@ class BaseSecondaryIndexingTests(QueryTests):
     def create_index(self, bucket, query_definition, deploy_node_info=None, desc=None):
         create_task = self.async_create_index(bucket, query_definition, deploy_node_info, desc=desc)
         create_task.result()
-        if self.defer_build:
-            build_index_task = self.async_build_index(bucket, [query_definition.index_name])
-            build_index_task.result()
-        check = self.n1ql_helper.is_index_ready_and_in_list(bucket, query_definition.index_name,
+        if self.build_index_after_create:
+            if self.defer_build:
+                build_index_task = self.async_build_index(bucket, [query_definition.index_name])
+                build_index_task.result()
+            check = self.n1ql_helper.is_index_ready_and_in_list(bucket, query_definition.index_name,
                                                             server=self.n1ql_node)
-        self.assertTrue(check, "index {0} failed to be created".format(query_definition.index_name))
+            self.assertTrue(check, "index {0} failed to be created".format(query_definition.index_name))
 
     def async_create_index(self, bucket, query_definition, deploy_node_info=None, desc=None):
         index_where_clause = None
@@ -162,7 +165,7 @@ class BaseSecondaryIndexingTests(QueryTests):
                         create_index_tasks.append(self.async_create_index(bucket.name,
                             query_definition, deploy_node_info = self.deploy_node_info))
                     self.sleep(3)
-        if self.defer_build:
+        if self.defer_build and self.build_index_after_create:
             index_list = []
             for task in create_index_tasks:
                 task.result()
@@ -650,9 +653,10 @@ class BaseSecondaryIndexingTests(QueryTests):
         for bucket_name in index_map.keys():
             self.log.info("Bucket: {0}".format(bucket_name))
             for index_name, index_val in index_map[bucket_name].iteritems():
+                self.log.info("Index: {0}".format(index_name))
                 self.log.info("number of docs pending: {0}".format(index_val["num_docs_pending"]))
-                self.log.info("number of docs queued: {0}".format(index_val["num_docs_pending"]))
-                if index_val["num_docs_pending"] and index_val["num_docs_pending"]:
+                self.log.info("number of docs queued: {0}".format(index_val["num_docs_queued"]))
+                if index_val["num_docs_pending"] and index_val["num_docs_queued"]:
                     return False
         return True
 
@@ -672,8 +676,7 @@ class BaseSecondaryIndexingTests(QueryTests):
             self.sleep(10)
             count += 1
         if not self._verify_items_count():
-            self.log.info("All Items didn't get Indexed...")
-            raise
+            raise Exception("All Items didn't get Indexed...")
         bucket_map = self.get_buckets_itemCount()
         for bucket in buckets:
             bucket_count = bucket_map[bucket.name]
@@ -840,7 +843,7 @@ class BaseSecondaryIndexingTests(QueryTests):
         log.info("Setting indexer memory quota to {0} MB...".format(memory_quota))
         node = self.get_nodes_from_services_map(service_type="index")
         rest = RestConnection(node)
-        rest.set_indexer_memoryQuota(indexMemoryQuota=memory_quota)
+        rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=memory_quota)
         cnt = 0
         docs = 50 + self.docs_per_day
         while cnt < 100:

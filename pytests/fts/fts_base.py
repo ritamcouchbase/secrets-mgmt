@@ -151,7 +151,6 @@ class INDEX_DEFAULTS:
         "sourceType": "couchbase",
         "sourceName": "default",
         "sourceUUID": "",
-        "sourceParams": SOURCE_CB_PARAMS,
         "planParams": {}
     }
 
@@ -235,9 +234,15 @@ class NodeHelper:
         if shell.extract_remote_info().type.lower() == OS.WINDOWS:
             time.sleep(wait_timeout * 5)
         else:
-            time.sleep(wait_timeout)
-        # disable firewall on these nodes
-        NodeHelper.disable_firewall(server)
+            time.sleep(wait_timeout/6)
+        while True:
+            try:
+                # disable firewall on these nodes
+                NodeHelper.disable_firewall(server)
+                break
+            except BaseException:
+                print "Node not reachable yet, will try after 10 secs"
+                time.sleep(10)
         # wait till server is ready after warmup
         ClusterOperationHelper.wait_for_ns_servers_or_assert(
             [server],
@@ -526,6 +531,7 @@ class FTSIndex:
         self._source_name = source_name
         self._one_time = False
         self.index_type = index_type
+        self.index_storage_type = TestInputSingleton.input.param("index_type", None)
         self.num_pindexes = 0
         self.index_definition = {
             "type": "fulltext-index",
@@ -535,7 +541,6 @@ class FTSIndex:
             "sourceType": "couchbase",
             "sourceName": "default",
             "sourceUUID": "",
-            "sourceParams": INDEX_DEFAULTS.SOURCE_CB_PARAMS,
             "planParams": {}
         }
         self.name = self.index_definition['name'] = name
@@ -571,29 +576,46 @@ class FTSIndex:
                 self.build_custom_plan_params(plan_params)
 
         if source_params:
-            self.index_definition['sourceParams'] = \
-                self.build_source_params(source_params)
+            self.index_definition['sourceParams'] = {}
+            self.index_definition['sourceParams'] = source_params
 
         if source_uuid:
             self.index_definition['sourceUUID'] = source_uuid
 
-        if TestInputSingleton.input.param("kvstore", None):
-            self.index_definition['params']['store'] = {"kvStoreName":
-                            TestInputSingleton.input.param("kvstore", None)}
+        self.index_definition['params']['store'] = {
+            "kvStoreName": "mossStore",
+            "mossStoreOptions": {}
+        }
+
+        if self.index_storage_type :
+            self.index_definition['params']['store']['indexType'] =  self.index_storage_type
+
+        if TestInputSingleton.input.param("num_snapshots_to_keep", None):
+            self.index_definition['params']['store']['numSnapshotsToKeep'] = int(
+                    TestInputSingleton.input.param(
+                        "num_snapshots_to_keep",
+                        None)
+                    )
+
+        if TestInputSingleton.input.param("level_compaction", None):
+            self.index_definition['params']['store']['mossStoreOptions']= {
+                "CompactionLevelMaxSegments": 9,
+                "CompactionPercentage": 0.6,
+                "CompactionLevelMultiplier": 3
+            }
+
+        if TestInputSingleton.input.param("moss_compact_threshold", None):
+            self.index_definition['params']['store']\
+                ['mossStoreOptions']['CompactionPercentage'] = int(
+                    TestInputSingleton.input.param(
+                        "moss_compact_threshold",
+                        None)
+                    )
 
         if TestInputSingleton.input.param("memory_only", None):
             self.index_definition['params']['store'] = \
                 {"kvStoreName": "moss",
                  "mossLowerLevelStoreName": ""}
-
-        if TestInputSingleton.input.param("moss_compact_threshold", None):
-            self.index_definition['params']['store'] = \
-                {"mossStoreOptions": {
-                    "CompactionPercentage": int(TestInputSingleton.input.param(
-                        "moss_compact_threshold",
-                        None))
-                }
-                }
 
         self.moss_enabled = TestInputSingleton.input.param("moss", True)
         if not self.moss_enabled:
@@ -668,14 +690,6 @@ class FTSIndex:
         plan = INDEX_DEFAULTS.PLAN_PARAMS
         plan.update(plan_params)
         return plan
-
-    def build_source_params(self, source_params):
-        if self._source_type == "couchbase":
-            src_params = INDEX_DEFAULTS.SOURCE_CB_PARAMS
-        else:
-            src_params = INDEX_DEFAULTS.SOURCE_FILE_PARAMS
-        src_params.update(source_params)
-        return src_params
 
     def add_child_field_to_default_mapping(self, field_name, field_type,
                                            field_alias=None, analyzer=None):
@@ -915,6 +929,14 @@ class FTSIndex:
         if not rest:
             rest = RestConnection(self.__cluster.get_random_fts_node())
         return rest.get_fts_index_doc_count(self.name)
+
+    def get_num_mutations_to_index(self, rest=None):
+        if not rest:
+            rest = RestConnection(self.__cluster.get_random_fts_node())
+        status, stat_value = rest.get_fts_stats(index_name=self.name,
+                                                bucket_name=self._source_name,
+                                                stat_name='num_mutations_to_index')
+        return stat_value
 
     def get_src_bucket_doc_count(self):
         return self.__cluster.get_doc_count_in_bucket(self.source_bucket)
@@ -1473,7 +1495,7 @@ class FTSIndex:
 
 
 class CouchbaseCluster:
-    def __init__(self, name, nodes, log, use_hostname=False):
+    def __init__(self, name, nodes, log, use_hostname=False, sdk_compression=True):
         """
         @param name: Couchbase cluster name. e.g C1, C2 to distinguish in logs.
         @param nodes: list of server objects (read from ini file).
@@ -1501,10 +1523,17 @@ class CouchbaseCluster:
         # to avoid querying certain nodes that undergo crash/reboot scenarios
         self.__bypass_fts_nodes = []
         self.__separate_nodes_on_services()
+        self.__set_fts_ram_quota()
+        self.sdk_compression = sdk_compression
 
     def __str__(self):
         return "Couchbase Cluster: %s, Master Ip: %s" % (
             self.__name, self.__master_node.ip)
+
+    def __set_fts_ram_quota(self):
+        fts_quota = TestInputSingleton.input.param("fts_quota", None)
+        if fts_quota:
+            RestConnection(self.__master_node).set_fts_ram_quota(fts_quota)
 
     def get_node(self, ip, port):
         for node in self.__nodes:
@@ -1530,8 +1559,8 @@ class CouchbaseCluster:
                 # if cluster-run and ip not 127.0.0.1
                 ip = "127.0.0.1"
             else:
-                ip = node_ip.split(':')[0]
-            node = self.get_node(ip, node_ip.split(':')[1])
+                ip = node_ip.rsplit(':', 1)[0]
+            node = self.get_node(ip, node_ip.rsplit(':', 1)[1])
             if node:
                 if "fts" in services:
                     self.__fts_nodes.append(node)
@@ -1613,17 +1642,18 @@ class CouchbaseCluster:
             retry = 0
             while count != 0:
                 count, err = shell.execute_command(
-                    "ls {0}/@fts |grep {1}*.pindex | wc -l".
+                    "ls {0}/@fts |grep ^{1} | wc -l".
                         format(data_dir, index_name))
                 if isinstance(count, list):
                     count = int(count[0])
                 else:
                     count = int(count)
                 self.__log.info(count)
+                time.sleep(2)
                 retry += 1
                 if retry > 5:
                     files, err = shell.execute_command(
-                        "ls {0}/@fts |grep {1}*.pindex".
+                        "ls {0}/@fts |grep ^{1}".
                             format(data_dir, index_name))
                     self.__log.info(files)
                     return False
@@ -1743,7 +1773,7 @@ class CouchbaseCluster:
 
     def _create_bucket_params(self, server, replicas=1, size=0, port=11211, password=None,
                              bucket_type='membase', enable_replica_index=1, eviction_policy='valueOnly',
-                             bucket_priority=None, flush_enabled=1, lww=False):
+                             bucket_priority=None, flush_enabled=1, lww=False, maxttl=None):
         """Create a set of bucket_parameters to be sent to all of the bucket_creation methods
         Parameters:
             server - The server to create the bucket on. (TestInputServer)
@@ -1774,13 +1804,14 @@ class CouchbaseCluster:
         bucket_params['bucket_priority'] = bucket_priority
         bucket_params['flush_enabled'] = flush_enabled
         bucket_params['lww'] = lww
+        bucket_params['maxTTL'] = maxttl
         return bucket_params
 
     def create_sasl_buckets(
             self, bucket_size, num_buckets=1, num_replicas=1,
             eviction_policy=EVICTION_POLICY.VALUE_ONLY,
             bucket_priority=BUCKET_PRIORITY.HIGH,
-            bucket_type=None):
+            bucket_type=None, maxttl=None):
         """Create sasl buckets.
         @param bucket_size: size of the bucket.
         @param num_buckets: number of buckets to create.
@@ -1798,7 +1829,8 @@ class CouchbaseCluster:
                 replicas=num_replicas,
                 eviction_policy=eviction_policy,
                 bucket_priority=bucket_priority,
-                bucket_type=bucket_type)
+                bucket_type=bucket_type,
+                maxttl=maxttl)
 
             bucket_tasks.append(self.__clusterop.async_create_sasl_bucket(name=name,password='password',
                                                                           bucket_params=sasl_params))
@@ -1807,7 +1839,8 @@ class CouchbaseCluster:
                     name=name, authType="sasl", saslPassword="password",
                     num_replicas=num_replicas, bucket_size=bucket_size,
                     eviction_policy=eviction_policy,
-                    bucket_priority=bucket_priority
+                    bucket_priority=bucket_priority,
+                    maxttl=maxttl
                 ))
 
         for task in bucket_tasks:
@@ -1818,7 +1851,7 @@ class CouchbaseCluster:
             port=None, num_replicas=1,
             eviction_policy=EVICTION_POLICY.VALUE_ONLY,
             bucket_priority=BUCKET_PRIORITY.HIGH,
-            bucket_type=None):
+            bucket_type=None, maxttl=None):
         """Create standard buckets.
         @param bucket_size: size of the bucket.
         @param num_buckets: number of buckets to create.
@@ -1843,7 +1876,8 @@ class CouchbaseCluster:
                 replicas=num_replicas,
                 eviction_policy=eviction_policy,
                 bucket_priority=bucket_priority,
-                bucket_type=bucket_type)
+                bucket_type=bucket_type,
+                maxttl=maxttl)
 
             bucket_tasks.append(
                 self.__clusterop.async_create_standard_bucket(
@@ -1860,7 +1894,7 @@ class CouchbaseCluster:
                     port=start_port + i,
                     eviction_policy=eviction_policy,
                     bucket_priority=bucket_priority,
-
+                    maxttl=maxttl
                 ))
 
         for task in bucket_tasks:
@@ -1870,7 +1904,7 @@ class CouchbaseCluster:
             self, bucket_size, num_replicas=1,
             eviction_policy=EVICTION_POLICY.VALUE_ONLY,
             bucket_priority=BUCKET_PRIORITY.HIGH,
-            bucket_type=None):
+            bucket_type=None, maxttl=None):
         """Create default bucket.
         @param bucket_size: size of the bucket.
         @param num_replicas: number of replicas (1-3).
@@ -1883,7 +1917,8 @@ class CouchbaseCluster:
             replicas=num_replicas,
             eviction_policy=eviction_policy,
             bucket_priority=bucket_priority,
-            bucket_type=bucket_type
+            bucket_type=bucket_type,
+            maxttl=maxttl
         )
         self.__clusterop.create_default_bucket(bucket_params)
         self.__buckets.append(
@@ -1894,7 +1929,8 @@ class CouchbaseCluster:
                 num_replicas=num_replicas,
                 bucket_size=bucket_size,
                 eviction_policy=eviction_policy,
-                bucket_priority=bucket_priority
+                bucket_priority=bucket_priority,
+                maxttl=maxttl
             ))
 
     def create_fts_index(self, name, source_type='couchbase',
@@ -2058,7 +2094,7 @@ class CouchbaseCluster:
         task = self.__clusterop.async_load_gen_docs(
             self.__master_node, bucket.name, gen, bucket.kvs[kv_store],
             OPS.CREATE, exp, flag, only_store_hash, batch_size, pause_secs,
-            timeout_secs)
+            timeout_secs, compression=self.sdk_compression)
         return task
 
     def load_bucket(self, bucket, num_items, value_size=512, exp=0,
@@ -2110,7 +2146,7 @@ class CouchbaseCluster:
                 self.__clusterop.async_load_gen_docs(
                     self.__master_node, bucket.name, gen, bucket.kvs[kv_store],
                     OPS.CREATE, exp, flag, only_store_hash, batch_size,
-                    pause_secs, timeout_secs)
+                    pause_secs, timeout_secs, compression=self.sdk_compression)
             )
         return tasks
 
@@ -2179,7 +2215,7 @@ class CouchbaseCluster:
                 self.__clusterop.async_load_gen_docs(
                     self.__master_node, bucket.name, kv_gen,
                     bucket.kvs[kv_store], ops, exp, flag,
-                    only_store_hash, batch_size, pause_secs, timeout_secs)
+                    only_store_hash, batch_size, pause_secs, timeout_secs, compression=self.sdk_compression)
             )
         return tasks
 
@@ -2205,7 +2241,7 @@ class CouchbaseCluster:
             self.__clusterop.async_load_gen_docs(
                 self.__master_node, bucket.name, kv_gen,
                 bucket.kvs[kv_store], ops, exp, flag,
-                only_store_hash, batch_size, pause_secs, timeout_secs)
+                only_store_hash, batch_size, pause_secs, timeout_secs, compression=self.sdk_compression)
         )
         return task
 
@@ -2233,27 +2269,31 @@ class CouchbaseCluster:
         self.__log.info("Now loading extra keys to reach dgm limit")
         seed = "%s-" % self.__name
         end = 0
-        for bucket in self.__buckets:
-            current_active_resident = StatsCommon.get_stats(
-                [self.__master_node],
-                bucket,
-                '',
-                'vb_active_perc_mem_resident')[self.__master_node]
-            start = items
-            while int(current_active_resident) > active_resident_ratio:
+        current_active_resident = StatsCommon.get_stats(
+            [self.__master_node],
+            self.__buckets[0],
+            '',
+            'vb_active_perc_mem_resident')[self.__master_node]
+        start = items
+        while int(current_active_resident) > active_resident_ratio:
+            if int(current_active_resident) - active_resident_ratio > 5:
+                end = start + batch_size * 100
+            else:
                 end = start + batch_size * 10
-                self.__log.info("loading %s keys ..." % (end - start))
+            self.__log.info("loading %s keys ..." % (end - start))
 
-                kv_gen = JsonDocGenerator(seed,
-                                          encoding="utf-8",
-                                          start=start,
-                                          end=end)
+            kv_gen = JsonDocGenerator(seed,
+                                      encoding="utf-8",
+                                      start=start,
+                                      end=end)
 
-                tasks = []
+            tasks = []
+            for bucket in self.__buckets:
+
                 tasks.append(self.__clusterop.async_load_gen_docs(
                     self.__master_node, bucket.name, kv_gen, bucket.kvs[kv_store],
                     OPS.CREATE, exp, flag, only_store_hash, batch_size,
-                    pause_secs, timeout_secs))
+                    pause_secs, timeout_secs, compression=self.sdk_compression))
 
                 if es:
                     tasks.append(es.async_bulk_load_ES(index_name='default_es_index',
@@ -2262,23 +2302,22 @@ class CouchbaseCluster:
 
                 for task in tasks:
                     task.result()
-                start = end
-                current_active_resident = StatsCommon.get_stats(
-                    [self.__master_node],
-                    bucket,
-                    '',
-                    'vb_active_perc_mem_resident')[self.__master_node]
-                self.__log.info(
-                    "Current resident ratio: %s, desired: %s bucket %s" % (
-                        current_active_resident,
-                        active_resident_ratio,
-                        bucket.name))
-            self.__log.info("Loaded a total of %s keys into bucket %s"
-                            % (end, bucket.name))
-        self._kv_gen[OPS.CREATE] = JsonDocGenerator(seed,
-                                                    encoding="utf-8",
-                                                    start=0,
-                                                    end=end)
+            start = end
+            current_active_resident = StatsCommon.get_stats(
+                [self.__master_node],
+                bucket,
+                '',
+                'vb_active_perc_mem_resident')[self.__master_node]
+            self.__log.info(
+                "Current resident ratio: %s, desired: %s bucket %s" % (
+                    current_active_resident,
+                    active_resident_ratio,
+                    bucket.name))
+            self._kv_gen[OPS.CREATE].gen_docs.update(kv_gen.gen_docs)
+            self._kv_gen[OPS.CREATE].end = kv_gen.end
+        self.__log.info("Loaded a total of %s keys into bucket %s"
+                        % (end, bucket.name))
+
         return self._kv_gen[OPS.CREATE]
 
     def update_bucket(self, bucket, fields_to_update=None, exp=0,
@@ -2334,7 +2373,7 @@ class CouchbaseCluster:
         task = self.__clusterop.async_load_gen_docs(
             self.__master_node, bucket.name, self._kv_gen[OPS.UPDATE],
             bucket.kvs[kv_store], OPS.UPDATE, exp, flag, only_store_hash,
-            batch_size, pause_secs, timeout_secs)
+            batch_size, pause_secs, timeout_secs, compression=self.sdk_compression)
         return task
 
     def update_delete_data(
@@ -2404,7 +2443,8 @@ class CouchbaseCluster:
                     bucket.kvs[kv_store],
                     op_type,
                     expiration,
-                    batch_size=1000)
+                    batch_size=1000,
+                    compression=self.sdk_compression)
             )
         return tasks
 
@@ -2841,10 +2881,9 @@ class FTSBaseTest(unittest.TestCase):
     def __is_cluster_run(self):
         return len(set([server.ip for server in self._input.servers])) == 1
 
-    def _setup_node_secret(self, secret_password=''):
+    def _setup_node_secret(self, secret_password):
         for server in self._input.servers:
             SecretsMasterBase(server).setup_pass_node(server, secret_password)
-
 
     def tearDown(self):
         """Clusters cleanup"""
@@ -2854,7 +2893,7 @@ class FTSBaseTest(unittest.TestCase):
                 self.fail("Errors found in logs : {0}".format(error_logger))
 
         if self.enable_secrets:
-            self._setup_node_secret()
+            self._setup_node_secret("")
 
         if self._input.param("negative_test", False):
             if hasattr(self, '_resultForDoCleanups') \
@@ -2922,12 +2961,14 @@ class FTSBaseTest(unittest.TestCase):
     def __setup_for_test(self):
         use_hostanames = self._input.param("use_hostnames", False)
         no_buckets = self._input.param("no_buckets", False)
+        sdk_compression = self._input.param("sdk_compression", True)
         master = self._input.servers[0]
         first_node = copy.deepcopy(master)
         self._cb_cluster = CouchbaseCluster("C1",
                                             [first_node],
                                             self.log,
-                                            use_hostanames)
+                                            use_hostanames,
+                                            sdk_compression=sdk_compression)
         self.__cleanup_previous()
         if self.compare_es:
             self.setup_es()
@@ -3077,7 +3118,8 @@ class FTSBaseTest(unittest.TestCase):
         if self.consistency_vectors != {}:
             self.consistency_vectors = eval(self.consistency_vectors)
             if self.consistency_vectors is not None and self.consistency_vectors != '':
-                self.consistency_vectors = json.loads(self.consistency_vectors)
+                if type(self.consistency_vectors) != dict:
+                    self.consistency_vectors = json.loads(self.consistency_vectors)
 
     def __initialize_error_count_dict(self):
         """
@@ -3138,6 +3180,7 @@ class FTSBaseTest(unittest.TestCase):
             num_buckets)
 
         bucket_type = TestInputSingleton.input.param("bucket_type", "membase")
+        maxttl = TestInputSingleton.input.param("maxttl", None)
 
         if self._create_default_bucket:
             self._cb_cluster.create_default_bucket(
@@ -3145,21 +3188,24 @@ class FTSBaseTest(unittest.TestCase):
                 self._num_replicas,
                 eviction_policy=self.__eviction_policy,
                 bucket_priority=bucket_priority,
-                bucket_type=bucket_type)
+                bucket_type=bucket_type,
+                maxttl=maxttl)
 
         self._cb_cluster.create_sasl_buckets(
             bucket_size, num_buckets=self.__num_sasl_buckets,
             num_replicas=self._num_replicas,
             eviction_policy=self.__eviction_policy,
             bucket_priority=bucket_priority,
-            bucket_type=bucket_type)
+            bucket_type=bucket_type,
+            maxttl=maxttl)
 
         self._cb_cluster.create_standard_buckets(
             bucket_size, num_buckets=self.__num_stand_buckets,
             num_replicas=self._num_replicas,
             eviction_policy=self.__eviction_policy,
             bucket_priority=bucket_priority,
-            bucket_type=bucket_type)
+            bucket_type=bucket_type,
+            maxttl=maxttl)
 
     def create_buckets_on_cluster(self):
         # if mixed priority is set by user, set high priority for sasl and
@@ -3217,6 +3263,18 @@ class FTSBaseTest(unittest.TestCase):
                                 encoding=encoding,
                                 start=0,
                                 end=num_keys)
+        self._cb_cluster.load_all_buckets_from_generator(gen)
+
+    def load_earthquakes(self, num_keys=None):
+        """
+        Loads geo-spatial jsons from earthquakes.json .
+        """
+        if not num_keys:
+            num_keys = self._num_items
+
+        gen = GeoSpatialDataLoader("earthquake",
+                                    start=0,
+                                    end=num_keys)
         self._cb_cluster.load_all_buckets_from_generator(gen)
 
     def perform_update_delete(self, fields_to_update=None):
@@ -3383,6 +3441,7 @@ class FTSBaseTest(unittest.TestCase):
                 continue
             retry_count = retry
             prev_count = 0
+            es_index_count = 0
             while retry_count > 0:
                 try:
                     index_doc_count = index.get_indexed_doc_count()
@@ -3394,17 +3453,29 @@ class FTSBaseTest(unittest.TestCase):
                                          index_doc_count))
                     else:
                         self.es.update_index('es_index')
+                        es_index_count = self.es.get_index_count('es_index')
                         self.log.info("Docs in bucket = %s, docs in FTS index '%s':"
                                       " %s, docs in ES index: %s "
                                       % (bucket_doc_count,
                                          index.name,
                                          index_doc_count,
-                                         self.es.get_index_count('es_index')))
+                                         es_index_count))
+                    if bucket_doc_count == 0:
+                        if item_count and item_count != 0:
+                            self.sleep(5,
+                                "looks like docs haven't been loaded yet...")
+                            retry_count -= 1
+                            continue
+
                     if item_count and index_doc_count > item_count:
                         break
 
                     if bucket_doc_count == index_doc_count:
-                        break
+                        if self.compare_es:
+                            if bucket_doc_count == es_index_count:
+                                break
+                        else:
+                            break
 
                     if prev_count < index_doc_count or prev_count > index_doc_count:
                         prev_count = index_doc_count
@@ -3415,6 +3486,17 @@ class FTSBaseTest(unittest.TestCase):
                     self.log.info(e)
                     retry_count -= 1
                 time.sleep(6)
+            # now wait for num_mutations_to_index to become zero to handle the pure
+            # updates scenario - where doc count remains unchanged
+            retry_mut_count = 20
+            if item_count == None:
+                while True and retry_count:
+                    num_mutations_to_index = index.get_num_mutations_to_index()
+                    if num_mutations_to_index > 0:
+                        self.sleep(5, "num_mutations_to_index: {0} > 0".format(num_mutations_to_index))
+                        retry_mut_count -= 1
+                    else:
+                        break
 
     def construct_plan_params(self):
         plan_params = {}
@@ -3561,6 +3643,40 @@ class FTSBaseTest(unittest.TestCase):
 
         return index.fts_queries
 
+    def generate_random_geo_queries(self, index, num_queries=1, sort=False):
+        """
+        Generates a bunch of geo location and bounding box queries for
+        fts and es.
+        :param index: fts index object
+        :param num_queries: no of queries to be generated
+        :return: fts or fts and es queries
+        """
+        import random
+        from random_query_generator.rand_query_gen import FTSESQueryGenerator
+        gen_queries = 0
+
+        while gen_queries < num_queries:
+            if bool(random.getrandbits(1)):
+                fts_query, es_query = FTSESQueryGenerator.\
+                    construct_geo_location_query()
+            else:
+                fts_query, es_query = FTSESQueryGenerator. \
+                    construct_geo_bounding_box_query()
+
+            index.fts_queries.append(
+                json.loads(json.dumps(fts_query, ensure_ascii=False)))
+
+            if self.compare_es:
+                self.es.es_queries.append(
+                        json.loads(json.dumps(es_query, ensure_ascii=False)))
+            gen_queries += 1
+
+        if self.es:
+            return index.fts_queries, self.es.es_queries
+        else:
+            return index.fts_queries
+
+
     def create_index(self, bucket, index_name, index_params=None,
                      plan_params=None):
         """
@@ -3575,8 +3691,6 @@ class FTSBaseTest(unittest.TestCase):
             name=index_name,
             source_name=bucket.name,
             index_params=index_params,
-            source_params={"authUser": bucket.name,
-                           "authPassword": bucket_password},
             plan_params=plan_params)
         self.is_index_partitioned_balanced(index)
         return index
@@ -3665,6 +3779,68 @@ class FTSBaseTest(unittest.TestCase):
                               doc['_type'],
                               key)
 
+    def create_geo_index_and_load(self):
+        """
+        Indexes geo spatial data
+        Normally when we have a nested object, we first "insert child mapping"
+        and then refer to the fields inside it. But, for geopoint, the
+        structure "geo" is the data being indexed. Refer: CBQE-4030
+        :return: the index object
+        """
+        if self.compare_es:
+            self.log.info("Creating a geo-index on Elasticsearch...")
+            self.es.delete_indices()
+            es_mapping = {
+                 "earthquake": {
+                     "properties": {
+                         "geo": {
+                             "type": "geo_point"
+                             }
+                         }
+                     }
+                 }
+            self.create_es_index_mapping(es_mapping=es_mapping)
+
+        self.log.info("Creating geo-index ...")
+        from fts_base import FTSIndex
+        geo_index = FTSIndex(
+            cluster=self._cb_cluster,
+            name="geo-index",
+            source_name="default",
+        )
+        geo_index.index_definition["params"] = {
+            "mapping": {
+                "types": {
+                    "earthquake": {
+                        "enabled": True,
+                        "properties": {
+                            "geo": {
+                                "dynamic": False,
+                                "enabled": True,
+                                "fields": [{
+                                    "include_in_all": True,
+                                    "name": "geo",
+                                    "type": "geopoint",
+                                    "store": False,
+                                    "index": True
+                                }
+                                ]
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        geo_index.create()
+        self.is_index_partitioned_balanced(geo_index)
+
+        self.dataset = "earthquakes"
+        self.log.info("Loading earthquakes.json ...")
+        self.async_load_data()
+        self.sleep(10, "Waiting to load earthquakes.json ...")
+        self.wait_for_indexing_complete()
+        return geo_index
+
     def create_index_es(self, index_name="es_index"):
         self.es.create_empty_index_with_bleve_equivalent_std_analyzer(index_name)
         self.log.info("Created empty index %s on Elastic Search node with "
@@ -3687,20 +3863,23 @@ class FTSBaseTest(unittest.TestCase):
                                      encoding=encoding,
                                      start=start,
                                      end=start + num_items)
+        elif dataset == "earthquakes":
+            return GeoSpatialDataLoader(name="earthquake",
+                                     start=start,
+                                     end=start + num_items)
 
     def populate_create_gen(self):
-        if self.dataset == "emp":
-            self.create_gen = self.get_generator(
-                self.dataset, num_items=self._num_items)
-        elif self.dataset == "wiki":
-            self.create_gen = self.get_generator(
-                self.dataset, num_items=self._num_items)
-        elif self.dataset == "all":
+        if self.dataset == "all":
+            # only emp and wiki
             self.create_gen = []
             self.create_gen.append(self.get_generator(
                 "emp", num_items=self._num_items / 2))
             self.create_gen.append(self.get_generator(
                 "wiki", num_items=self._num_items / 2))
+        else:
+            self.create_gen = self.get_generator(
+                self.dataset, num_items=self._num_items)
+
 
     def populate_update_gen(self, fields_to_update=None):
         if self.dataset == "emp":

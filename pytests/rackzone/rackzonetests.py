@@ -12,6 +12,7 @@ from membase.api.exception import RebalanceFailedException
 from couchbase_helper.documentgenerator import BlobGenerator
 from remote.remote_util import RemoteMachineShellConnection
 from membase.helper.cluster_helper import ClusterOperationHelper
+from membase.helper.bucket_helper import BucketOperationHelper
 from scripts.install import InstallerJob
 from testconstants import COUCHBASE_VERSION_2
 from testconstants import COUCHBASE_FROM_VERSION_3
@@ -162,80 +163,103 @@ class RackzoneTests(RackzoneBaseTest):
         nodes_in_zone = {}
         nodes_in_zone["Group 1"] = [serverInfo.ip]
         """ Create zone base on params zone in test"""
-        if int(self.zone) > 1:
-            for i in range(1,int(self.zone)):
-                a = "Group "
-                zones.append(a + str(i + 1))
-                rest.add_zone(a + str(i + 1))
-        servers_rebalanced = []
-        self.user = serverInfo.rest_username
-        self.password = serverInfo.rest_password
-        if len(self.servers)%int(self.zone) != 0:
-            msg = "unbalance zone.  Recaculate to make balance ratio node/zone"
-            raise Exception(msg)
-        """ Add node to each zone """
-        k = 1
-        for i in range(0, self.zone):
-            if "Group 1" in zones[i]:
-                total_node_per_zone = int(len(self.servers))/int(self.zone) - 1
-            else:
-                nodes_in_zone[zones[i]] = []
-                total_node_per_zone = int(len(self.servers))/int(self.zone)
-            for n in range(0,total_node_per_zone):
-                nodes_in_zone[zones[i]].append(self.servers[k].ip)
-                rest.add_node(user=self.user, password=self.password, \
-                    remoteIp=self.servers[k].ip, port='8091', zone_name=zones[i])
-                k += 1
-        otpNodes = [node.id for node in rest.node_statuses()]
-        """ Start rebalance and monitor it. """
-        started = rest.rebalance(otpNodes, [])
+        try:
+            if int(self.zone) > 1:
+                for i in range(1,int(self.zone)):
+                    a = "Group "
+                    zone_name = a + str(i + 1)
+                    zones.append(zone_name)
+                    rest.add_zone(zone_name)
+            servers_rebalanced = []
+            self.user = serverInfo.rest_username
+            self.password = serverInfo.rest_password
+            if len(self.servers)%int(self.zone) != 0:
+                msg = "unbalance zone.  Recaculate to make balance ratio node/zone"
+                raise Exception(msg)
+            """ Add node to each zone """
+            k = 1
+            for i in range(0, self.zone):
+                if "Group 1" in zones[i]:
+                    total_node_per_zone = int(len(self.servers))/int(self.zone) - 1
+                else:
+                    nodes_in_zone[zones[i]] = []
+                    total_node_per_zone = int(len(self.servers))/int(self.zone)
+                for n in range(0,total_node_per_zone):
+                    nodes_in_zone[zones[i]].append(self.servers[k].ip)
+                    rest.add_node(user=self.user, password=self.password, \
+                        remoteIp=self.servers[k].ip, port='8091', zone_name=zones[i])
+                    k += 1
+            otpNodes = [node.id for node in rest.node_statuses()]
+            """ Start rebalance and monitor it. """
+            started = rest.rebalance(otpNodes, [])
 
-        if started:
-            try:
-                result = rest.monitorRebalance()
-            except RebalanceFailedException as e:
-                self.log.error("rebalance failed: {0}".format(e))
-                return False, servers_rebalanced
-            msg = "successfully rebalanced cluster {0}"
-            self.log.info(msg.format(result))
-        """ Verify replica of one node should not in same zone of active. """
-        self._verify_replica_distribution_in_zones(nodes_in_zone, "tap")
+            if started:
+                try:
+                    result = rest.monitorRebalance()
+                except RebalanceFailedException as e:
+                    self.log.error("rebalance failed: {0}".format(e))
+                    return False, servers_rebalanced
+                msg = "successfully rebalanced cluster {0}"
+                self.log.info(msg.format(result))
+            """ Verify replica of one node should not in same zone of active. """
+            self._verify_replica_distribution_in_zones(nodes_in_zone, "tap")
 
-        """ Simulate entire nodes down in zone(s) by killing erlang process"""
-        if self.shutdown_zone >= 1 and self.zone >=2:
-            self.log.info("Start to shutdown nodes in zone to failover")
-            for down_zone in range(1, self.shutdown_zone + 1):
-                down_zone = "Group " + str(down_zone + 1)
-                for sv in nodes_in_zone[down_zone]:
-                    for si in self.servers:
-                        if si.ip == sv:
-                            server = si
+            """ Simulate entire nodes down in zone(s) by killing erlang process"""
+            shutdown_nodes = []
+            if self.shutdown_zone >= 1 and self.zone >=2:
+                self.log.info("Start to shutdown nodes in zone to failover")
+                for down_zone in range(1, self.shutdown_zone + 1):
+                    down_zone = "Group " + str(down_zone + 1)
+                    for sv in nodes_in_zone[down_zone]:
+                        for si in self.servers:
+                            if si.ip == sv:
+                                server = si
+                                shutdown_nodes.append(si)
 
-                    shell = RemoteMachineShellConnection(server)
-                    os_info = shell.extract_remote_info()
-                    shell.kill_erlang(os_info)
-                    """ Failover down node(s)"""
-                    failed_over = rest.fail_over("ns_1@" + server.ip)
-                    if not failed_over:
-                        self.log.info("unable to failover the node the first time. \
-                                       try again in 75 seconds..")
-                        time.sleep(75)
+                        shell = RemoteMachineShellConnection(server)
+                        shell.kill_erlang(self.os_name)
+                        """ Failover down node(s)"""
+                        self.log.info("----> start failover node %s" % server.ip)
                         failed_over = rest.fail_over("ns_1@" + server.ip)
-                    self.assertTrue(failed_over, "unable to failover node after erlang killed")
-        otpNodes = [node.id for node in rest.node_statuses()]
-        self.log.info("start rebalance after failover.")
-        """ Start rebalance and monitor it. """
-        started = rest.rebalance(otpNodes, [])
-        if started:
-            try:
-                result = rest.monitorRebalance()
-            except RebalanceFailedException as e:
-                self.log.error("rebalance failed: {0}".format(e))
-                return False, servers_rebalanced
-            msg = "successfully rebalanced in selected nodes from the cluster ? {0}"
-            self.log.info(msg.format(result))
-        """ Compare current keys in bucekt with initial loaded keys count. """
-        self._verify_total_keys(self.servers[0], self.num_items)
+                        if not failed_over:
+                            self.log.info("unable to failover the node the first time. \
+                                           try again in 75 seconds..")
+                            time.sleep(75)
+                            failed_over = rest.fail_over("ns_1@" + server.ip)
+                        self.assertTrue(failed_over,
+                                        "unable to failover node after erlang was killed")
+            otpNodes = [node.id for node in rest.node_statuses()]
+            self.log.info("----> start rebalance after failover.")
+            """ Start rebalance and monitor it. """
+            started = rest.rebalance(otpNodes, [])
+            if started:
+                try:
+                    result = rest.monitorRebalance()
+                except RebalanceFailedException as e:
+                    self.log.error("rebalance failed: {0}".format(e))
+                    return False, servers_rebalanced
+                msg = "successfully rebalanced in selected nodes from the cluster ? {0}"
+                self.log.info(msg.format(result))
+            """ Compare current keys in bucekt with initial loaded keys count. """
+            self._verify_total_keys(self.servers[0], self.num_items)
+        except Exception as e:
+            self.log.error(e)
+            raise
+        finally:
+            self.log.info("---> remove all nodes in all zones")
+            if shutdown_nodes:
+                for node in shutdown_nodes:
+                    conn = RemoteMachineShellConnection(node)
+                    self.log.info("---> re-start nodes %s after erlang killed " % node.ip)
+                    conn.start_couchbase()
+                    time.sleep(5)
+            BucketOperationHelper.delete_all_buckets_or_assert(self.servers, self)
+            ClusterOperationHelper.cleanup_cluster(self.servers, master=self.master)
+            self.log.info("---> remove all zones in cluster")
+            rm_zones = rest.get_zone_names()
+            for zone in rm_zones:
+                if zone != "Group 1":
+                    rest.delete_zone(zone)
 
     """ to run this test, use these params:
             nodes_init=3,version=2.5.1-xx,type=community   """
@@ -355,57 +379,46 @@ class RackzoneTests(RackzoneBaseTest):
         else:
             raise Exception("There is not zone with name: %s in cluster" % name)
 
-    def _verify_replica_distribution_in_zones(self, nodes, commmand, saslPassword = ""):
+    def _verify_replica_distribution_in_zones(self, nodes, command, saslPassword = ""):
         shell = RemoteMachineShellConnection(self.servers[0])
-        info = shell.extract_remote_info()
-        if info.type.lower() == 'linux':
-            cbstat_command = "%scbstats" % (testconstants.LINUX_COUCHBASE_BIN_PATH)
-        elif info.type.lower() == 'windows':
-            cbstat_command = "%scbstats.exe" % (testconstants.WIN_COUCHBASE_BIN_PATH)
-        elif info.type.lower() == 'mac':
-            cbstat_command = "%scbstats" % (testconstants.MAC_COUCHBASE_BIN_PATH)
-        else:
-            raise Exception("Not support OS")
         saslPassword = ''
         versions = RestConnection(self.master).get_nodes_versions()
         for group in nodes:
             for node in nodes[group]:
+                buckets = RestConnection(self.servers[0]).get_buckets()
                 if versions[0][:5] in COUCHBASE_VERSION_2:
                     command = "tap"
-                    if not info.type.lower() == 'windows':
-                        commands = "%s %s:11210 %s -b %s -p \"%s\" |grep :vb_filter: |  awk '{print $1}' \
-                            | xargs | sed 's/eq_tapq:replication_ns_1@//g'  | sed 's/:vb_filter://g' \
-                            " % (cbstat_command, node, command,"default", saslPassword)
-                    elif info.type.lower() == 'windows':
-                        """ standalone gawk.exe should be copy to ../ICW/bin for command below to work.
-                            Ask IT to do this if you don't know how """
-                        commands = "%s %s:11210 %s -b %s -p \"%s\" | grep.exe :vb_filter: | gawk.exe '{print $1}' \
-                               | sed.exe 's/eq_tapq:replication_ns_1@//g'  | sed.exe 's/:vb_filter://g' \
-                               " % (cbstat_command, node, command,"default", saslPassword)
-                    output, error = shell.execute_command(commands)
+                    cmd  = "%s %s:11210 %s -b %s -p '%s' "\
+                            % (self.cbstat_command, node, command, buckets[0].name, saslPassword)
+                    cmd += "| grep :vb_filter: "\
+                           "| gawk '{print $1}' "\
+                           "| sed 's/eq_tapq:replication_ns_1@//g' "\
+                           "| sed 's/:vb_filter://g' "
+                    output, error = shell.execute_command(cmd)
                 elif versions[0][:5] in COUCHBASE_FROM_VERSION_3:
                     command = "dcp"
-                    if not info.type.lower() == 'windows':
-                        commands = "%s %s:11210 %s -b %s -p \"%s\" | grep :replication:ns_1@%s |  grep vb_uuid | \
-                                    awk '{print $1}' | sed 's/eq_dcpq:replication:ns_1@%s->ns_1@//g' | \
-                                    sed 's/:.*//g' | sort -u | xargs \
-                                   " % (cbstat_command, node, command,"default", saslPassword, node, node)
-                        output, error = shell.execute_command(commands)
-                    elif info.type.lower() == 'windows':
-                        commands = "%s %s:11210 %s -b %s -p \"%s\" | grep.exe :replication:ns_1@%s |  grep vb_uuid | \
-                                    gawk.exe '{print $1}' | sed.exe 's/eq_dcpq:replication:ns_1@%s->ns_1@//g' | \
-                                    sed.exe 's/:.*//g' \
-                                   " % (cbstat_command, node, command,"default", saslPassword, node, node)
-                        output, error = shell.execute_command(commands)
-                        output = sorted(set(output))
+                    if 5 <= versions[0]:
+                        saslPassword = self.master.rest_password
+                    cmd  = "%s %s:11210 %s -b %s -u Administrator -p '%s' "\
+                            % (self.cbstat_command, node, command, buckets[0].name, saslPassword)
+                    cmd += "| grep :replication:ns_1@%s |  grep vb_uuid "\
+                           "| gawk '{print $1}' "\
+                           "| sed 's/eq_dcpq:replication:ns_1@%s->ns_1@//g' "\
+                           "| sed 's/:.*//g' "\
+                            % (node, node)
+                    output, error = shell.execute_command(cmd)
+                    output = sorted(set(output))
                 shell.log_command_output(output, error)
                 output = output[0].split(" ")
                 if node not in output:
                     self.log.info("{0}".format(nodes))
-                    self.log.info("replicas of node {0} are in nodes {1}".format(node, output))
-                    self.log.info("replicas of node {0} are not in its zone {1}".format(node, group))
+                    self.log.info("replicas of node {0} are in nodes {1}"
+                                                   .format(node, output))
+                    self.log.info("replicas of node {0} are not in its zone {1}"
+                                                   .format(node, group))
                 else:
-                    raise Exception("replica of node {0} are on its own zone {1}".format(node, group))
+                    raise Exception("replica of node {0} are on its own zone {1}"
+                                                   .format(node, group))
         shell.disconnect()
 
     def _verify_total_keys(self, server, loaded_keys):
@@ -416,7 +429,8 @@ class RackzoneTests(RackzoneBaseTest):
             stats = rest.get_bucket_stats(bucket)
             if stats["curr_items"] == loaded_keys:
                 self.log.info("{0} keys in bucket {2} match with \
-                               pre-loaded keys: {1}".format(stats["curr_items"], loaded_keys, bucket))
+                               pre-loaded keys: {1}".format(stats["curr_items"],
+                                                            loaded_keys, bucket))
             else:
                 raise Exception("{%s keys in bucket %s does not match with \
                                  loaded %s keys" % (stats["curr_items"], bucket, loaded_keys))

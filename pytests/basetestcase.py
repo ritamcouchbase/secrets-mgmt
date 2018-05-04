@@ -18,7 +18,7 @@ from couchbase_helper.cluster import Cluster
 from couchbase_helper.document import View
 from couchbase_helper.documentgenerator import DocumentGenerator
 from couchbase_helper.stats_tools import StatsCommon
-from TestInput import TestInputSingleton
+from TestInput import TestInputSingleton, TestInputServer
 from membase.api.rest_client import RestConnection, Bucket, RestHelper
 from membase.helper.bucket_helper import BucketOperationHelper
 from membase.helper.cluster_helper import ClusterOperationHelper
@@ -33,6 +33,7 @@ from testconstants import MAX_COMPACTION_THRESHOLD
 from membase.helper.cluster_helper import ClusterOperationHelper
 from security.rbac_base import RbacBase
 from security.SecretsMasterBase import SecretsMasterBase
+
 
 from couchbase_cli import CouchbaseCLI
 import testconstants
@@ -84,6 +85,18 @@ class BaseTestCase(unittest.TestCase):
         self.result_analyzer = DataAnalysisResultAnalyzer()
         self.set_testrunner_client()
         self.change_bucket_properties=False
+        self.cbas_node = self.input.cbas
+        self.cbas_servers = []
+        self.kv_servers = []
+        self.otpNodes = []
+        for server in self.servers:
+            if "cbas" in server.services:
+                self.cbas_servers.append(server)
+            if "kv" in server.services:
+                self.kv_servers.append(server)
+        if not self.cbas_node and len(self.cbas_servers)>=1:
+            self.cbas_node = self.cbas_servers[0]
+                            
         try:
             self.skip_setup_cleanup = self.input.param("skip_setup_cleanup", False)
             self.vbuckets = self.input.param("vbuckets", 1024)
@@ -100,7 +113,11 @@ class BaseTestCase(unittest.TestCase):
             self.parallelism = self.input.param("parallelism",False)
             if self.default_bucket:
                 self.default_bucket_name = "default"
+            self.skip_standard_buckets = self.input.param("skip_standard_buckets", False)
             self.standard_buckets = self.input.param("standard_buckets", 0)
+            if self.skip_standard_buckets:
+                self.standard_buckets = 0
+                BucketOperationHelper.delete_all_buckets_or_assert(servers=self.servers, test_case=self)
             self.sasl_buckets = self.input.param("sasl_buckets", 0)
             self.num_buckets = self.input.param("num_buckets", 0)
             self.verify_unacked_bytes = self.input.param("verify_unacked_bytes", False)
@@ -143,9 +160,6 @@ class BaseTestCase(unittest.TestCase):
             self.enable_bloom_filter = self.input.param("enable_bloom_filter", False)
             self.enable_time_sync = self.input.param("enable_time_sync", False)
             self.gsi_type = self.input.param("gsi_type", 'plasma')
-            if hasattr(self.input, 'cbas'):
-                if self.input.cbas:
-                    self.cbas_node = self.input.cbas
             # bucket parameters go here,
             self.bucket_size = self.input.param("bucket_size", None)
             self.bucket_type = self.input.param("bucket_type", 'membase')
@@ -161,6 +175,9 @@ class BaseTestCase(unittest.TestCase):
             self.sasl_password=self.input.param("sasl_password", 'password')
             self.lww = self.input.param("lww",
                                         False)  # only applies to LWW but is here because the bucket is created here
+            self.maxttl = self.input.param("maxttl", None)
+            self.compression_mode = self.input.param("compression_mode", 'passive')
+            self.sdk_compression = self.input.param("sdk_compression", True)
             self.sasl_bucket_name = "bucket"
             self.sasl_bucket_priority = self.input.param("sasl_bucket_priority", None)
             self.standard_bucket_priority = self.input.param("standard_bucket_priority", None)
@@ -197,7 +214,8 @@ class BaseTestCase(unittest.TestCase):
                                                        replicas=self.num_replicas,
                                                        enable_replica_index=self.enable_replica_index,
                                                        eviction_policy=self.eviction_policy, bucket_priority=None,
-                                                       lww=self.lww)
+                                                       lww=self.lww, maxttl=self.maxttl,
+                                                       compression_mode=self.compression_mode)
 
             membase_params = copy.deepcopy(shared_params)
             membase_params['bucket_type'] = 'membase'
@@ -211,11 +229,13 @@ class BaseTestCase(unittest.TestCase):
             memcached_params['bucket_type'] = 'memcached'
             self.bucket_base_params['memcached'] = memcached_params
 
-            # avoid any cluster operations in setup for new upgrade & upgradeXDCR tests
+            # avoid any cluster operations in setup for new upgrade
+            #  & upgradeXDCR tests
             if str(self.__class__).find('newupgradetests') != -1 or \
                             str(self.__class__).find('upgradeXDCR') != -1 or \
                             str(self.__class__).find('Upgrade_EpTests') != -1 or \
-                            hasattr(self, 'skip_buckets_handle') and self.skip_buckets_handle:
+                            hasattr(self, 'skip_buckets_handle') and\
+                            self.skip_buckets_handle:
                 self.log.info("any cluster operation in setup will be skipped")
                 self.primary_index_created = True
                 self.log.info("==============  basetestcase setup was finished for test #{0} {1} ==============" \
@@ -227,7 +247,8 @@ class BaseTestCase(unittest.TestCase):
                     self.log.warn("teardDown for previous test failed. will retry..")
                     self.case_number -= 1000
                 self.cleanup = True
-                self.tearDown()
+                if not self.skip_init_check_cbserver:
+                    self.tearDown()
                 self.cluster = Cluster()
             if not self.skip_init_check_cbserver:
                 self.log.info("initializing cluster")
@@ -252,7 +273,8 @@ class BaseTestCase(unittest.TestCase):
                 self.change_checkpoint_params()
 
                 # Add built-in user
-                self.add_built_in_server_user(node=self.master)
+                if not self.skip_init_check_cbserver:
+                    self.add_built_in_server_user(node=self.master)
                 self.log.info("done initializing cluster")
             else:
                 self.quota = ""
@@ -419,10 +441,6 @@ class BaseTestCase(unittest.TestCase):
                 BucketOperationHelper.delete_all_buckets_or_assert(self.servers, self)
                 ClusterOperationHelper.cleanup_cluster(self.servers, master=self.master)
                 ClusterOperationHelper.wait_for_ns_servers_or_assert(self.servers, self)
-
-                if self.enable_secrets:
-                    self._setup_node_secret("")
-
                 self.log.info("==============  basetestcase cleanup was finished for test #{0} {1} ==============" \
                               .format(self.case_number, self._testMethodName))
         except BaseException:
@@ -521,7 +539,8 @@ class BaseTestCase(unittest.TestCase):
 
     def _create_bucket_params(self, server, replicas=1, size=0, port=11211, password=None,
                               bucket_type='membase', enable_replica_index=1, eviction_policy='valueOnly',
-                              bucket_priority=None, flush_enabled=1, lww=False):
+                              bucket_priority=None, flush_enabled=1, lww=False, maxttl=None,
+                              compression_mode='passive'):
         """Create a set of bucket_parameters to be sent to all of the bucket_creation methods
         Parameters:
             server - The server to create the bucket on. (TestInputServer)
@@ -554,6 +573,8 @@ class BaseTestCase(unittest.TestCase):
         bucket_params['bucket_priority'] = bucket_priority
         bucket_params['flush_enabled'] = flush_enabled
         bucket_params['lww'] = lww
+        bucket_params['maxTTL'] = maxttl
+        bucket_params['compressionMode'] = compression_mode
         return bucket_params
 
     def _bucket_creation(self):
@@ -562,7 +583,8 @@ class BaseTestCase(unittest.TestCase):
             default_params=self._create_bucket_params(server=self.master, size=self.bucket_size,
                                                              replicas=self.num_replicas, bucket_type=self.bucket_type,
                                                              enable_replica_index=self.enable_replica_index,
-                                                             eviction_policy=self.eviction_policy, lww=self.lww)
+                                                             eviction_policy=self.eviction_policy, lww=self.lww,
+                                                             maxttl=self.maxttl, compression_mode=self.compression_mode)
             self.cluster.create_default_bucket(default_params)
             self.buckets.append(Bucket(name="default", authType="sasl", saslPassword="",
                                        num_replicas=self.num_replicas, bucket_size=self.bucket_size,
@@ -607,7 +629,8 @@ class BaseTestCase(unittest.TestCase):
                 #except:
                     #print 'got a failure'
 
-    def _create_sasl_buckets(self, server, num_buckets, server_id=None, bucket_size=None, password='password'):
+    def _create_sasl_buckets(self, server, num_buckets, server_id=None,\
+                             bucket_size=None, password='password'):
         if not num_buckets:
             return
         if server_id is None:
@@ -615,6 +638,8 @@ class BaseTestCase(unittest.TestCase):
         if bucket_size is None:
             bucket_size = self.bucket_size
         bucket_tasks = []
+        if self.sasl_password != "password":
+            password = self.sasl_password
 
         bucket_params = copy.deepcopy(self.bucket_base_params['membase']['non_ephemeral'])
         bucket_params['size'] = bucket_size
@@ -627,15 +652,20 @@ class BaseTestCase(unittest.TestCase):
                 bucket_priority = self.get_bucket_priority(self.sasl_bucket_priority[i])
             bucket_params['bucket_priority'] = bucket_priority
 
-            bucket_tasks.append(self.cluster.async_create_sasl_bucket(name=name, password=self.sasl_password,
-                                                                      bucket_params=bucket_params))
-            self.buckets.append(Bucket(name=name, authType="sasl", saslPassword=self.sasl_password,
-                                       num_replicas=self.num_replicas, bucket_size=self.bucket_size,
-                                       master_id=server_id, eviction_policy=self.eviction_policy, lww=self.lww))
+            bucket_tasks.append(self.cluster.async_create_sasl_bucket(name=name,
+                                                        password=password,
+                                                        bucket_params=bucket_params))
+            self.buckets.append(Bucket(name=name, authType="sasl", saslPassword=password,
+                                                  num_replicas=self.num_replicas,
+                                                  bucket_size=self.bucket_size,
+                                                  master_id=server_id,
+                                                  eviction_policy=self.eviction_policy,
+                                                  lww=self.lww))
         for task in bucket_tasks:
             task.result(self.wait_timeout * 10)
         if self.enable_time_sync:
-            self._set_time_sync_on_buckets(['bucket' + str(i) for i in range(num_buckets)])
+            self._set_time_sync_on_buckets(['bucket' + str(i) \
+                                             for i in range(num_buckets)])
 
     def _create_standard_buckets(self, server, num_buckets, server_id=None, bucket_size=None):
         if not num_buckets:
@@ -649,13 +679,11 @@ class BaseTestCase(unittest.TestCase):
         bucket_params = copy.deepcopy(self.bucket_base_params['membase']['non_ephemeral'])
         bucket_params['size'] = bucket_size
         bucket_params['bucket_type'] = self.bucket_type
-
-        versions = RestConnection(server).get_nodes_versions()
-        pre_spock = False
-        for version in versions:
-            if "5" > version:
-                pre_spock = True
-
+        cluster_compatibility = RestConnection(server).check_cluster_compatibility("5.0")
+        if cluster_compatibility is None:
+            pre_spock = True
+        else:
+            pre_spock = not cluster_compatibility
         for i in range(num_buckets):
             name = 'standard_bucket' + str(i)
             port = STANDARD_BUCKET_PORT + i + 1
@@ -730,13 +758,11 @@ class BaseTestCase(unittest.TestCase):
 
         bucket_params = copy.deepcopy(self.bucket_base_params['memcached'])
         bucket_params['size'] = bucket_size
-
-        versions = RestConnection(server).get_nodes_versions()
-        pre_spock = False
-        for version in versions:
-            if "5" > version:
-                pre_spock = True
-
+        cluster_compatibility = RestConnection(server).check_cluster_compatibility("5.0")
+        if cluster_compatibility is None:
+            pre_spock = True
+        else:
+            pre_spock = not cluster_compatibility
         for i in range(num_buckets):
 
             name = 'memcached_bucket' + str(i)
@@ -840,7 +866,7 @@ class BaseTestCase(unittest.TestCase):
                                                               bucket.kvs[kv_store],
                                                               op_type, exp, flag, only_store_hash,
                                                               batch_size, pause_secs, timeout_secs,
-                                                              proxy_client))
+                                                              proxy_client, compression=self.sdk_compression))
             else:
                 self._load_memcached_bucket(server, gen, bucket.name)
         return tasks
@@ -916,7 +942,8 @@ class BaseTestCase(unittest.TestCase):
         task = self.cluster.async_load_gen_docs(server, bucket.name, gen,
                                                 bucket.kvs[kv_store], op_type,
                                                 exp, flag, only_store_hash,
-                                                batch_size, pause_secs, timeout_secs)
+                                                batch_size, pause_secs, timeout_secs,
+                                                compression=self.sdk_compression)
         return task
 
     def _load_bucket(self, bucket, server, kv_gen, op_type, exp, kv_store=1, flag=0, only_store_hash=True,
@@ -1044,7 +1071,8 @@ class BaseTestCase(unittest.TestCase):
             if bucket.type == 'memcached':
                 continue
             tasks.append(self.cluster.async_verify_data(server, bucket, bucket.kvs[kv_store], max_verify,
-                                                        only_store_hash, batch_size, replica_to_read))
+                                                        only_store_hash, batch_size, replica_to_read,
+                                                        compression=self.sdk_compression))
         for task in tasks:
             task.result(timeout)
 
@@ -1136,7 +1164,8 @@ class BaseTestCase(unittest.TestCase):
             if verify_total_items:
                 verified = True
                 for bucket in self.buckets:
-                    verified &= RebalanceHelper.wait_till_total_numbers_match(master, bucket)
+                    verified &= RebalanceHelper.wait_till_total_numbers_match(master, bucket,
+                                                                              timeout_in_seconds=(timeout or 500))
                 self.assertTrue(verified, "Lost items!!! Replication was completed but "
                                           "          sum(curr_items) don't match the curr_items_total")
         else:
@@ -1596,7 +1625,8 @@ class BaseTestCase(unittest.TestCase):
         data_map = {}
         for bucket in self.buckets:
             self.log.info(" Collect data for bucket {0}".format(bucket.name))
-            task = self.cluster.async_get_meta_data(dest_server, bucket, bucket.kvs[kv_store])
+            task = self.cluster.async_get_meta_data(dest_server, bucket, bucket.kvs[kv_store],
+                                                    compression=self.sdk_compression)
             task.result()
             data_map[bucket.name] = task.get_meta_data_store()
         return data_map
@@ -1643,7 +1673,8 @@ class BaseTestCase(unittest.TestCase):
 
     def data_active_and_replica_analysis(self, server, max_verify=None, only_store_hash=True, kv_store=1):
         for bucket in self.buckets:
-            task = self.cluster.async_verify_active_replica_data(server, bucket, bucket.kvs[kv_store], max_verify)
+            task = self.cluster.async_verify_active_replica_data(server, bucket, bucket.kvs[kv_store], max_verify,
+                                                                 self.sdk_compression)
             task.result()
 
     def data_meta_data_analysis(self, dest_server, meta_data_store, kv_store=1):
@@ -2026,22 +2057,25 @@ class BaseTestCase(unittest.TestCase):
                cbadminbucket
            Default added user is cbadminbucket with admin role
         """
-        rest = RestConnection(self.master)
-        versions = rest.get_nodes_versions()
-        for version in versions:
-            if "5" > version:
-                self.log.info("Atleast one of the nodes in the cluster is "
-                              "pre 5.0 version. Hence not creating rbac user "
-                              "for the cluster. RBAC is a 5.0 feature.")
-                return
+        if node is None:
+            node = self.master
+        rest = RestConnection(node)
+        cluster_compatibility = rest.check_cluster_compatibility("5.0")
+        if cluster_compatibility is None:
+            pre_spock = True
+        else:
+            pre_spock = not cluster_compatibility
+        if pre_spock:
+            self.log.info("Atleast one of the nodes in the cluster is "
+                          "pre 5.0 version. Hence not creating rbac user "
+                          "for the cluster. RBAC is a 5.0 feature.")
+            return
         if testuser is None:
             testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket',
                                                 'password': 'password'}]
         if rolelist is None:
             rolelist = [{'id': 'cbadminbucket', 'name': 'cbadminbucket',
                                                       'roles': 'admin'}]
-        if node is None:
-            node = self.master
 
         self.log.info("**** add built-in '%s' user to node %s ****" % (testuser[0]["name"],
                                                                        node.ip))
@@ -2209,7 +2243,7 @@ class BaseTestCase(unittest.TestCase):
         else:
             list = []
             for server_info in self.services_map[service_type]:
-                tokens = server_info.split(":")
+                tokens = server_info.rsplit(":", 1)
                 ip = tokens[0]
                 port = int(tokens[1])
                 for server in servers:
@@ -2223,14 +2257,40 @@ class BaseTestCase(unittest.TestCase):
                                       .format(server.ip, hostname))
                         server.ip = hostname
                         shell.disconnect()
+                    elif ip.endswith(".svc"):
+                        from kubernetes import client as kubeClient, config as kubeConfig
+                        currNamespace = ip.split('.')[2]
+                        kubeConfig.load_incluster_config()
+                        v1 = kubeClient.CoreV1Api()
+                        nodeList = v1.list_pod_for_all_namespaces(watch=False)
+
+                        for node in nodeList.items:
+                            if node.metadata.namespace == currNamespace and node.status.pod_ip == server.ip:
+                                ip = node.status.pod_ip
+                                break
+                    elif "couchbase.com" in server.ip and "couchbase.com" not in ip:
+                        node = TestInputServer()
+                        node.ip = ip
+                        node.ssh_username = server.ssh_username
+                        node.ssh_password = server.ssh_password
+                        shell = RemoteMachineShellConnection(node)
+                        hostname = shell.get_full_hostname()
+                        self.log.info("convert IP: {0} to hostname: {1}" \
+                                      .format(ip, hostname))
+                        ip = hostname
+                        shell.disconnect()
                     if (port != 8091 and port == int(server.port)) or \
-                            (port == 8091 and server.ip == ip):
+                            (port == 8091 and server.ip.lower() == ip.lower()):
                         list.append(server)
-            self.log.info("list of all nodes in cluster: {0}".format(list))
+            self.log.info("list of {0} nodes in cluster: {1}".format(service_type, list))
             if get_all_nodes:
                 return list
             else:
-                return list[0]
+                try:
+                    return list[0]
+                except IndexError as e:
+                    self.log.info(self.services_map)
+                    raise e
 
     def get_services(self, tgt_nodes, tgt_services, start_node=1):
         services = []
@@ -2258,7 +2318,7 @@ class BaseTestCase(unittest.TestCase):
                 self.nodes_out_list.append(self.servers[1])
             return
         for service_fail_map in self.nodes_out_dist.split("-"):
-            tokens = service_fail_map.split(":")
+            tokens = service_fail_map.rsplit(":", 1)
             count = 0
             service_type = tokens[0]
             service_type_count = int(tokens[1])
@@ -2340,7 +2400,7 @@ class BaseTestCase(unittest.TestCase):
                                                           gens_load[bucket],
                                                           bucket.kvs[kv_store], op_type, exp, flag,
                                                           only_store_hash, batch_size, pause_secs,
-                                                          timeout_secs))
+                                                          timeout_secs, compression=self.sdk_compression))
         for task in tasks:
             task.result()
         self.num_items = items + start_items
@@ -2368,7 +2428,7 @@ class BaseTestCase(unittest.TestCase):
                                                           gens_load[bucket],
                                                           bucket.kvs[kv_store], op_type, exp, flag,
                                                           only_store_hash, batch_size, pause_secs,
-                                                          timeout_secs))
+                                                          timeout_secs, compression=self.sdk_compression))
         self.num_items = items + start_items
         return tasks
 

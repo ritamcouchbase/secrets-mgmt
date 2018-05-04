@@ -1,7 +1,4 @@
 from tuqquery.tuq import QueryTests
-from remote.remote_util import RemoteMachineShellConnection
-from membase.api.rest_client import RestConnection
-from membase.api.exception import CBQError
 
 class SysCatalogTests(QueryTests):
 
@@ -20,7 +17,12 @@ class SysCatalogTests(QueryTests):
     def test_sites(self):
         self.query = "SELECT * FROM system:datastores"
         result = self.run_cbq_query()
-        host = (self.master.ip, self.input.tuq_client)[self.input.tuq_client and "client" in self.input.tuq_client]
+
+        if self.input.tuq_client and "client" in self.input.tuq_client:
+            host = self.input.tuq_client
+        else:
+            host = self.master.ip
+        #host = (self.master.ip, self.input.tuq_client)[self.input.tuq_client and "client" in self.input.tuq_client]
         if self.version == 'sherlock':
             host ='127.0.0.1'
         for res in result['results']:
@@ -74,9 +76,7 @@ class SysCatalogTests(QueryTests):
     def test_memcached_buckets(self):
         self.query = "SELECT * FROM system:keyspaces"
         result = self.run_cbq_query()
-        print result
         self.assertTrue(result['metrics']['resultCount'] ==2)
         self.query = "SELECT count(*) as count FROM system:keyspaces"
         result = self.run_cbq_query()
-        print result
         self.assertTrue(result['results'][0]['count'] ==2)

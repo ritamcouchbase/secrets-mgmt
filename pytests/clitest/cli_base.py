@@ -1,12 +1,13 @@
 import random
 import time
+import json, subprocess
 
 import logger
 from basetestcase import BaseTestCase
 from membase.api.rest_client import RestConnection
 from remote.remote_util import RemoteMachineShellConnection
 from testconstants import LINUX_COUCHBASE_SAMPLE_PATH, \
-    WIN_COUCHBASE_SAMPLE_PATH, \
+    WIN_COUCHBASE_SAMPLE_PATH_C, \
     WIN_BACKUP_C_PATH, LINUX_BACKUP_PATH, LINUX_COUCHBASE_LOGS_PATH, \
     WIN_COUCHBASE_LOGS_PATH, WIN_TMP_PATH, WIN_TMP_PATH_RAW, \
     WIN_BACKUP_PATH, LINUX_COUCHBASE_BIN_PATH, LINUX_ROOT_PATH, LINUX_CB_PATH,\
@@ -14,6 +15,7 @@ from testconstants import LINUX_COUCHBASE_SAMPLE_PATH, \
 
 from couchbase_helper.cluster import Cluster
 from security.rbac_base import RbacBase
+from security.rbacmain import rbacmain
 from membase.helper.bucket_helper import BucketOperationHelper
 from membase.helper.cluster_helper import ClusterOperationHelper
 
@@ -30,17 +32,6 @@ class CliBaseTest(BaseTestCase):
         self.r = random.Random()
         self.vbucket_count = 1024
         self.cluster = Cluster()
-
-        """ Add built-in user cbadminbucket to second cluster """
-        self.log.info("add built-in user cbadminbucket to master cluster.")
-        testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
-        RbacBase().create_user_source(testuser, 'builtin', self.master)
-        self.sleep(10)
-        """ Assign user to role """
-        role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
-        RbacBase().add_user_role(role_list, RestConnection(self.master), 'builtin')
-        self.sleep(10)
-
         self.clusters_dic = self.input.clusters
         if self.clusters_dic:
             if len(self.clusters_dic) > 1:
@@ -51,7 +42,15 @@ class CliBaseTest(BaseTestCase):
         else:
             self.log.error("**** Cluster config is setup in ini file. ****")
         self.shell = RemoteMachineShellConnection(self.master)
-        self.rest = RestConnection(self.master)
+        if not self.skip_init_check_cbserver:
+            self.rest = RestConnection(self.master)
+            self.cb_version = self.rest.get_nodes_version()
+            """ cli output message """
+            self.cli_bucket_create_msg = "SUCCESS: Bucket created"
+            self.cli_rebalance_msg = "SUCCESS: Rebalance complete"
+            if self.cb_version[:3] == "4.6":
+                self.cli_bucket_create_msg = "SUCCESS: bucket-create"
+                self.cli_rebalance_msg = "SUCCESS: rebalanced cluster"
         self.import_back = self.input.param("import_back", False)
         if self.import_back:
             if len(self.servers) < 3:
@@ -59,33 +58,46 @@ class CliBaseTest(BaseTestCase):
         self.test_type = self.input.param("test_type", "import")
         self.import_file = self.input.param("import_file", None)
         self.imex_type = self.input.param("imex_type", "json")
-        self.format_type = self.input.param("format_type", None)
+        self.format_type = self.input.param("format_type", "lines")
         self.import_method = self.input.param("import_method", "file://")
-        self.node_version = self.rest.get_nodes_version()
         self.force_failover = self.input.param("force_failover", False)
+        self.json_invalid_errors = self.input.param("json-invalid-errors", None)
+        self.field_separator = self.input.param("field-separator", "comma")
+        self.key_gen = self.input.param("key-gen", True)
         self.skip_docs = self.input.param("skip-docs", None)
         self.limit_docs = self.input.param("limit-docs", None)
         self.limit_rows = self.input.param("limit-rows", None)
+        self.skip_rows = self.input.param("skip-rows", None)
+        self.omit_empty = self.input.param("omit-empty", None)
+        self.infer_types = self.input.param("infer-types", None)
         self.fx_generator = self.input.param("fx-generator", None)
         self.fx_gen_start = self.input.param("fx-gen-start", None)
+        self.secure_conn = self.input.param("secure-conn", False)
+        self.no_cacert = self.input.param("no-cacert", False)
+        self.no_ssl_verify = self.input.param("no-ssl-verify", False)
         self.verify_data = self.input.param("verify-data", False)
+        self.field_substitutions = self.input.param("field-substitutions", None)
+        self.check_preload_keys = self.input.param("check-preload-keys", True)
+        self.debug_logs = self.input.param("debug-logs", False)
+        self.should_fail = self.input.param("should-fail", False)
         info = self.shell.extract_remote_info()
+        self.os_version = info.distribution_version.lower()
         type = info.type.lower()
         self.excluded_commands = self.input.param("excluded_commands", None)
-        """ cli output message """
-        self.cli_bucket_create_msg = "SUCCESS: Bucket created"
-        self.cli_rebalance_msg = "SUCCESS: Rebalance complete"
-        self.cb_version = self.rest.get_nodes_version()
-        if self.cb_version[:3] == "4.6":
-            self.cli_bucket_create_msg = "SUCCESS: bucket-create"
-            self.cli_rebalance_msg = "SUCCESS: rebalanced cluster"
         self.os = 'linux'
         self.full_v = None
         self.short_v = None
         self.build_number = None
-        self.cli_command_path = LINUX_COUCHBASE_BIN_PATH
+        cmd =  'curl -g %s:8091/diag/eval -u Administrator:password ' % self.master.ip
+        cmd += '-d "path_config:component_path(bin)."'
+        bin_path  = subprocess.check_output(cmd, shell=True)
+        if "bin" not in bin_path:
+            self.fail("Check if cb server install on %s" % self.master.ip)
+        else:
+            self.cli_command_path = bin_path.replace('"','') + "/"
         self.root_path = LINUX_ROOT_PATH
         self.tmp_path = "/tmp/"
+        self.tmp_path_raw = "/tmp/"
         self.cmd_backup_path = LINUX_BACKUP_PATH
         self.backup_path = LINUX_BACKUP_PATH
         self.cmd_ext = ""
@@ -96,8 +108,6 @@ class CliBaseTest(BaseTestCase):
         self.base_cb_path = LINUX_CB_PATH
         """ non root path """
         if self.nonroot:
-            self.cli_command_path = "/home/%s%s" % (self.master.ssh_username,
-                                                    LINUX_COUCHBASE_BIN_PATH)
             self.sample_files_path = "/home/%s%s" % (self.master.ssh_username,
                                                      LINUX_COUCHBASE_SAMPLE_PATH)
             self.log_path = "/home/%s%s" % (self.master.ssh_username,
@@ -113,12 +123,15 @@ class CliBaseTest(BaseTestCase):
             self.tmp_path_raw = WIN_TMP_PATH_RAW
             self.cmd_backup_path = WIN_BACKUP_C_PATH
             self.backup_path = WIN_BACKUP_PATH
-            self.cli_command_path = WIN_COUCHBASE_BIN_PATH
-            self.sample_files_path = WIN_COUCHBASE_SAMPLE_PATH
+            self.sample_files_path = WIN_COUCHBASE_SAMPLE_PATH_C
             self.log_path = WIN_COUCHBASE_LOGS_PATH
+            win_format = "C:/Program Files"
+            cygwin_format = "/cygdrive/c/Program\ Files"
+            if win_format in self.cli_command_path:
+                self.cli_command_path = self.cli_command_path.replace(win_format,
+                                                                      cygwin_format)
         if info.distribution_type.lower() == 'mac':
             self.os = 'mac'
-            self.cli_command_path = MAC_COUCHBASE_BIN_PATH
         self.full_v, self.short_v, self.build_number = self.shell.get_cbversion(type)
         self.couchbase_usrname = "%s" % (self.input.membase_settings.rest_username)
         self.couchbase_password = "%s" % (self.input.membase_settings.rest_password)
@@ -409,7 +422,7 @@ class CliBaseTest(BaseTestCase):
         settings = rest.get_global_index_settings()
 
         if storage_mode == "default":
-            storage_mode = "forestdb"
+            storage_mode = "plasma"
         elif storage_mode == "memopt":
             storage_mode = "memory_optimized"
 
@@ -608,21 +621,12 @@ class CliBaseTest(BaseTestCase):
                  ",".join(recovery_servers))
         return False
 
-    def verifyReadOnlyUser(self, server, username):
+    def verifyUserRoles(self, server, username, roles):
         rest = RestConnection(server)
-        ro_user, status = rest.get_ro_user()
-        if not status:
-            log.info("Getting the read only user failed")
-            return False
-
-        if ro_user.startswith('"') and ro_user.endswith('"'):
-            ro_user = ro_user[1:-1]
-
-        if ro_user != username:
-            log.info("Read only user name does not match (%s vs %s)", ro_user,
-                     username)
-            return False
-        return True
+        status, content, header = rbacmain(server)._retrieve_user_roles()
+        content = json.loads(content)
+        temp = rbacmain()._parse_get_user_response(content, username, username, roles)
+        return temp
 
     def verifyLdapSettings(self, server, admins, ro_admins, default, enabled):
         rest = RestConnection(server)
@@ -869,7 +873,8 @@ class CliBaseTest(BaseTestCase):
     def verify_gsi_compact_settings(self, compact_mode, compact_percent,
                                     compact_interval,
                                     from_period, to_period, enable_abort):
-        settings = self.rest.get_auto_compaction_settings()
+        rest = RestConnection(self.master)
+        settings = rest.get_auto_compaction_settings()
         ac = settings["autoCompactionSettings"]["indexFragmentationThreshold"]
         cc = settings["autoCompactionSettings"]["indexCircularCompaction"]
         if compact_mode is not None:
@@ -894,12 +899,11 @@ class CliBaseTest(BaseTestCase):
                         raise Exception(
                             "fromHour and fromMinute should be zero")
                 if compact_interval is None:
-                    if from_period != \
-                                            str(cc["interval"][
+                    if (from_period != str(cc["interval"][
                                                     "fromHour"]) + ":" + str(
-                                cc["interval"]["fromMinute"]) \
-                            and str(cc["interval"]["toHour"]) + ":" + str(
-                                cc["interval"]["toMinute"]):
+                                cc["interval"]["fromMinute"])) \
+                    and (to_period != str(cc["interval"]["toHour"]) + ":" + str(
+                                cc["interval"]["toMinute"])):
                         raise Exception(
                             "fromHour and fromMinute do not set correctly")
         return True

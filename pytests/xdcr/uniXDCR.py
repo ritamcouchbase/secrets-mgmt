@@ -89,6 +89,10 @@ class unidirectional(XDCRNewBaseTest):
         self.verify_results()
 
     def load_with_async_ops_with_warmup(self):
+        bucket_type = self._input.param("bucket_type", "membase")
+        if bucket_type == "ephemeral":
+            "Test case does not apply for Ephemeral buckets"
+            return
         self.setup_xdcr_and_load()
         warmupnodes = []
         if "C1" in self._warmup:
@@ -105,6 +109,10 @@ class unidirectional(XDCRNewBaseTest):
         self.verify_results()
 
     def load_with_async_ops_with_warmup_master(self):
+        bucket_type = self._input.param("bucket_type", "membase")
+        if bucket_type == "ephemeral":
+            "Test case does not apply for Ephemeral buckets"
+            return
         self.setup_xdcr_and_load()
         warmupnodes = []
         if "C1" in self._warmup:
@@ -117,6 +125,8 @@ class unidirectional(XDCRNewBaseTest):
         self.sleep(self._wait_timeout / 2)
 
         NodeHelper.wait_warmup_completed(warmupnodes)
+
+        self.sleep(300)
 
         self.verify_results()
 
@@ -163,6 +173,8 @@ class unidirectional(XDCRNewBaseTest):
         self.sleep(self._wait_timeout / 6)
         self.perform_update_delete()
 
+        self.sleep(300)
+
         self.verify_results()
 
     """Testing Unidirectional load( Loading only at source). Failover node at Source/Destination while
@@ -203,6 +215,11 @@ class unidirectional(XDCRNewBaseTest):
         a full verification: wait for the disk queues to drain
         and then verify that there has been any data loss on all clusters."""
     def replication_with_ddoc_compaction(self):
+        bucket_type = self._input.param("bucket_type", "membase")
+        if bucket_type == "ephemeral":
+            self.log.info("Test case does not apply to ephemeral")
+            return
+
         self.setup_xdcr_and_load()
 
         num_views = self._input.param("num_views", 5)
@@ -265,6 +282,7 @@ class unidirectional(XDCRNewBaseTest):
                 self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_delete)
                 self.sleep(5)
 
+        self.sleep(600)
         self.verify_results()
 
     def replication_while_rebooting_a_non_master_destination_node(self):
@@ -443,7 +461,12 @@ class unidirectional(XDCRNewBaseTest):
 
         for crashed_node in crashed_nodes:
             self.__start_cb_server(crashed_node)
-        NodeHelper.wait_warmup_completed(crashed_nodes)
+
+        bucket_type = self._input.param("bucket_type", "membase")
+        if bucket_type == "ephemeral":
+            self.sleep(self._wait_timeout)
+        else:
+            NodeHelper.wait_warmup_completed(crashed_nodes)
 
         self.async_perform_update_delete()
         self.verify_results()
@@ -470,15 +493,23 @@ class unidirectional(XDCRNewBaseTest):
         for crashed_node in crashed_nodes:
             self.__start_cb_server(crashed_node)
 
+        bucket_type = self._input.param("bucket_type", "membase")
+
         if "C1" in crash:
-            NodeHelper.wait_warmup_completed(self.src_cluster.get_nodes())
+            if bucket_type == "ephemeral":
+                self.sleep(self._wait_timeout)
+            else:
+                NodeHelper.wait_warmup_completed(self.src_cluster.get_nodes())
             gen_create = BlobGenerator('loadTwo', 'loadTwo', self._value_size, end=self._num_items)
             self.src_cluster.load_all_buckets_from_generator(kv_gen=gen_create)
 
         self.async_perform_update_delete()
 
         if "C2" in crash:
-            NodeHelper.wait_warmup_completed(self.dest_cluster.get_nodes())
+            if bucket_type == "ephemeral":
+                self.sleep(self._wait_timeout)
+            else:
+                NodeHelper.wait_warmup_completed(self.dest_cluster.get_nodes())
 
         self.verify_results()
 
@@ -657,15 +688,17 @@ class unidirectional(XDCRNewBaseTest):
         for task in load_tasks:
             task.result()
 
+        conn.start_couchbase()
+        self.sleep(300)
+
         for node in self.src_cluster.get_nodes():
             count = NodeHelper.check_goxdcr_log(
                             node,
-                            "batchGetMeta timed out",
+                            "batchGetMeta received fatal error and had to abort",
                             goxdcr_log)
-            self.assertEqual(count, 0, "batchGetMeta timed out error message found in " + str(node.ip))
-            self.log.info("batchGetMeta timed out error message not found in " + str(node.ip))
+            self.assertEqual(count, 0, "batchGetMeta error message found in " + str(node.ip))
+            self.log.info("batchGetMeta error message not found in " + str(node.ip))
 
-        conn.start_couchbase()
         self.verify_results()
 
     def test_verify_mb19802_2(self):
@@ -681,11 +714,12 @@ class unidirectional(XDCRNewBaseTest):
         for node in self.src_cluster.get_nodes():
             count = NodeHelper.check_goxdcr_log(
                             node,
-                            "batchGetMeta timed out",
+                            "batchGetMeta received fatal error and had to abort",
                             goxdcr_log)
             self.assertEqual(count, 0, "batchGetMeta timed out error message found in " + str(node.ip))
-            self.log.info("batchGetMeta timed out error message not found in " + str(node.ip))
+            self.log.info("batchGetMeta error message not found in " + str(node.ip))
 
+        self.sleep(300)
         self.verify_results()
 
     def test_verify_mb19697(self):
@@ -733,6 +767,7 @@ class unidirectional(XDCRNewBaseTest):
             self.log.info("counter goes backward, maybe due to the pipeline is restarted "
                                         "error message not found in " + str(node.ip))
 
+        self.sleep(300)
         self.verify_results()
 
     def test_verify_mb20463(self):
@@ -783,6 +818,14 @@ class unidirectional(XDCRNewBaseTest):
         self.verify_results()
 
     def test_rollback(self):
+        bucket = self.src_cluster.get_buckets()[0]
+        nodes = self.src_cluster.get_nodes()
+
+        # Stop Persistence on Node A & Node B
+        for node in nodes:
+            mem_client = MemcachedClientHelper.direct_client(node, bucket)
+            mem_client.stop_persistence()
+
         goxdcr_log = NodeHelper.get_goxdcr_log_dir(self._input.servers[0])\
                      + '/goxdcr.log*'
         self.setup_xdcr()
@@ -793,14 +836,6 @@ class unidirectional(XDCRNewBaseTest):
         self.src_cluster.load_all_buckets_from_generator(gen)
 
         self.src_cluster.resume_all_replications()
-
-        bucket = self.src_cluster.get_buckets()[0]
-        nodes = self.src_cluster.get_nodes()
-
-        # Stop Persistence on Node A & Node B
-        for node in nodes:
-            mem_client = MemcachedClientHelper.direct_client(node, bucket)
-            mem_client.stop_persistence()
 
         # Perform mutations on the bucket
         self.async_perform_update_delete()
@@ -845,3 +880,66 @@ class unidirectional(XDCRNewBaseTest):
                         goxdcr_log)
         self.assertGreater(count, 0, "rollback did not happen as expected")
         self.log.info("rollback happened as expected")
+
+    def test_verify_mb19181(self):
+        load_tasks = self.setup_xdcr_async_load()
+        goxdcr_log = NodeHelper.get_goxdcr_log_dir(self._input.servers[0]) \
+                     + '/goxdcr.log*'
+
+        self.dest_cluster.failover_and_rebalance_master()
+
+        for task in load_tasks:
+            task.result()
+
+        for node in self.src_cluster.get_nodes():
+            count = NodeHelper.check_goxdcr_log(
+                node,
+                "Can't move update state from",
+                goxdcr_log)
+            self.assertEqual(count, 0, "Can't move update state from - error message found in " + str(node.ip))
+            self.log.info("Can't move update state from - error message not found in " + str(node.ip))
+
+        self.verify_results()
+
+    def test_verify_mb21369(self):
+        repeat = self._input.param("repeat", 5)
+        load_tasks = self.setup_xdcr_async_load()
+
+        conn = RemoteMachineShellConnection(self.src_cluster.get_master_node())
+        output, error = conn.execute_command("netstat -an | grep " + self.src_cluster.get_master_node().ip
+                                             + ":11210 | wc -l")
+        conn.log_command_output(output, error)
+        before = output[0]
+        self.log.info("No. of memcached connections before: {0}".format(output[0]))
+
+        for i in range(0, repeat):
+            self.src_cluster.pause_all_replications()
+            self.sleep(30)
+            self.src_cluster.resume_all_replications()
+
+            self.sleep(self._wait_timeout)
+
+            output, error = conn.execute_command("netstat -an | grep " + self.src_cluster.get_master_node().ip
+                                                 + ":11210 | wc -l")
+            conn.log_command_output(output, error)
+            self.log.info("No. of memcached connections in iteration {0}:  {1}".format(i+1, output[0]))
+            self.assertLessEqual(abs(int(output[0]) - int(before)), 5, "Number of memcached connections changed beyond allowed limit")
+
+        for task in load_tasks:
+            task.result()
+
+        self.log.info("No. of memcached connections did not increase with pausing and resuming replication multiple times")
+
+    def test_maxttl_setting(self):
+        maxttl = int(self._input.param("maxttl", None))
+        self.setup_xdcr_and_load()
+        self.merge_all_buckets()
+        self._wait_for_replication_to_catchup()
+        self.sleep(maxttl, "waiting for docs to expire per maxttl properly")
+        for bucket in self.src_cluster.get_buckets():
+            items = RestConnection(self.src_master).get_active_key_count(bucket)
+            self.log.info("Docs in source bucket is {0} after maxttl has elapsed".format(items))
+            if items != 0:
+                self.fail("Docs in source bucket is not 0 after maxttl has elapsed")
+        self._wait_for_replication_to_catchup()
+

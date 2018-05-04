@@ -36,6 +36,9 @@ test-viewquery:
 test-views-pre-merge:
 	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes.ini conf/view-conf/py-view-pre-merge.conf
 
+test-views-pre-merge-viewci:
+	scripts/start_cluster_and_run_tests.sh b/resources/dev-single-node.ini conf/view-conf/py-view-pre-merge-sanscreatedeleteviews.conf
+	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes.ini conf/view-conf/py-view-pre-merge-sanscreatedeleteviews.conf
 # required before merging changes to view engine
 test-viewmerge:
 	echo "Running view merge tests with single node cluster"
@@ -44,13 +47,20 @@ test-viewmerge:
 	sleep $(SLEEP_TIME)
 	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes.ini conf/view-conf/py-viewmerge.conf
 
+test-viewmerge-viewci:
+	scripts/start_cluster_and_run_tests.sh b/resources/dev-single-node.ini conf/view-conf/py-viewmerge-sansdevview.conf
+	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes.ini conf/view-conf/py-viewmerge-sansdevview.conf
+
 # required before merging 2i code
 test-2i-integrations-tests:
 	echo "Running 2i integration tests with 4 node cluster"
-	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes-xdcr_n1ql_2i.ini conf/simple_2i_n1ql.conf
+	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes-xdcr_n1ql_2i.ini conf/simple_2i_n1ql.conf 1 1 $(PARAMS)
 
 e2e-kv-single-node:
 	scripts/start_cluster_and_run_tests.sh b/resources/dev.ini conf/py-all-dev.conf
+
+test-eventing-sanity-tests:
+	python scripts/start_cluster_and_run_tests.py $(MAKE) b/resources/dev-4-nodes-xdcr_n1ql_2i.ini conf/eventing/eventing_sanity.conf $(VERBOSE) $(DEBUG)
 
 test-xdcr-merge:
 	scripts/start_cluster_and_run_tests.sh b/resources/dev-4-nodes-xdcr.ini conf/py-xdcrmerge.conf

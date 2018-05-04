@@ -7,7 +7,6 @@ import base64
 import requests
 import urllib
 import random
-import time
 
 class ServerInfo():
     def __init__(self,
@@ -49,7 +48,6 @@ class x509main:
         self.slave_host = x509main.SLAVE_HOST
 
     def getLocalIPAddress(self):
-        '''
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(('couchbase.com', 0))
         return s.getsockname()[0]
@@ -58,6 +56,7 @@ class x509main:
         if '1' not in ipAddress:
             status, ipAddress = commands.getstatusoutput("ifconfig eth0 | grep  -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | awk '{print $2}'")
         return ipAddress
+        '''
 
     def setup_cluster_nodes_ssl(self,servers=[],reload_cert=False):
         for server in servers:
@@ -67,7 +66,7 @@ class x509main:
         shell = RemoteMachineShellConnection(self.slave_host)
         shell.execute_command("rm -rf " + x509main.CACERTFILEPATH)
         shell.execute_command("mkdir " + x509main.CACERTFILEPATH)
-
+        
         if type == 'go':
             files = []
             cert_file = "./pytests/security/" + x509main.GOCERTGENFILE
@@ -76,6 +75,8 @@ class x509main:
             output,error = shell.execute_command("go run " + cert_file + " -store-to=" + x509main.CACERTFILEPATH + "interm -sign-with=" + x509main.CACERTFILEPATH + "root -common-name=Intemediate\ Authority")
             log.info ('Output message is {0} and error message is {1}'.format(output,error))
             for server in servers:
+                if "[" in server.ip:
+                    server.ip = server.ip.replace("[", "").replace("]", "")
                 output, error = shell.execute_command("go run " + cert_file + " -store-to=" + x509main.CACERTFILEPATH + server.ip + " -sign-with=" + x509main.CACERTFILEPATH + "interm -common-name=" + server.ip + " -final=true")
                 log.info ('Output message is {0} and error message is {1}'.format(output,error))
                 output, error = shell.execute_command("cat " + x509main.CACERTFILEPATH + server.ip + ".crt " + x509main.CACERTFILEPATH + "interm.crt  > " + " " + x509main.CACERTFILEPATH + "long_chain"+server.ip+".pem")
@@ -99,6 +100,9 @@ class x509main:
 
 
             for server in servers:
+                #check if the ip address is ipv6 raw ip address, remove [] brackets
+                if "[" in server.ip:
+                    server.ip = server.ip.replace("[", "").replace("]", "")
                 output, error = shell.execute_command("openssl genrsa " + encryption + " -out " + x509main.CACERTFILEPATH +server.ip + ".key " + str(key_length))
                 log.info ('Output message is {0} and error message is {1}'.format(output,error))
                 output, error= shell.execute_command("openssl req -new -key " + x509main.CACERTFILEPATH + server.ip + ".key -out " + x509main.CACERTFILEPATH + server.ip + ".csr -subj '/C=UA/O=My Company/CN=" + server.ip + "'")
@@ -190,9 +194,6 @@ class x509main:
         data  =  open(file_path_name, 'rb').read()
         http = httplib2.Http()
         status, content = http.request(URL, 'POST', headers=self._create_rest_headers(username,password),body=data)
-        print URL
-        print status
-        print content
         return status, content
 
 
@@ -202,44 +203,26 @@ class x509main:
         api = rest.baseUrl + url
         self._rest_upload_file(api,x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE,"Administrator",'password')
 
-    '''
     def _validate_ssl_login(self,host=None,port=18091,username='Administrator',password='password'):
-        key_file = x509main.CACERTFILEPATH + "/" + x509main.CAKEYFILE
-        cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
-        i = 0;
-        while i < 4:
-            try:
-                r = requests.get("https://"+str(host[i].ip)+":18091",verify=cert_file)
-                if r.status_code == 200:
-                    header = {'Content-type': 'application/x-www-form-urlencoded'}
-                    params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
-                    r = requests.post("https://"+str(host[i].ip)+":18091/uilogin",data=params,headers=header,verify=cert_file)
-                    return r.status_code
-            except Exception, ex:
-                log.info ("into exception form validate_ssl_login")
-                log.info (" Exception is {0}".format(ex))
-                time.sleep(5)
-                i = i +1
-                continue
-    '''
-
-    def _validate_ssl_login(self, host=None, port=18091, username='Administrator', password='password'):
         key_file = x509main.CACERTFILEPATH + "/" + x509main.CAKEYFILE
         cert_file = x509main.CACERTFILEPATH + "/" + x509main.CACERTFILE
         if host is None:
             host = self.host.ip
+        # check if the ip is raw ip address
+        if host.count(':') > 0:
+            # raw ipv6? enclose in square brackets
+            host = '[' + host + ']'
         try:
-            r = requests.get("https://" + host + ":18091", verify=cert_file)
+            r = requests.get("https://"+host+":18091",verify=cert_file)
             if r.status_code == 200:
                 header = {'Content-type': 'application/x-www-form-urlencoded'}
-                params = urllib.urlencode({'user': '{0}'.format(username), 'password': '{0}'.format(password)})
-                r = requests.post("https://" + host + ":18091/uilogin", data=params, headers=header, verify=cert_file)
+                params = urllib.urlencode({'user':'{0}'.format(username), 'password':'{0}'.format(password)})
+                r = requests.post("https://"+host+":18091/uilogin",data=params,headers=header,verify=cert_file)
                 return r.status_code
         except Exception, ex:
-            log.info("into exception form validate_ssl_login")
-            log.info(" Exception is {0}".format(ex))
+            log.info ("into exception form validate_ssl_login")
+            log.info (" Exception is {0}".format(ex))
             return 'error'
-
 
     def _get_cluster_ca_cert(self):
         rest = RestConnection(self.host)

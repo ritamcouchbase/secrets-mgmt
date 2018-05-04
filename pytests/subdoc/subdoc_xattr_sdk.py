@@ -311,52 +311,18 @@ class SubdocXattrSdkTest(SubdocBaseTest):
             pass
 
     # https://issues.couchbase.com/browse/MB-24104
-    # TODO extend scenarious when the issue resolve
-    # TODO and then add cases for MB-23888 Ability to include xattr data for deleted documents in view results
     def test_delete_doc_with_xattr_access_deleted(self):
         k = 'xattrs'
 
-        self.client.upsert(k, {})
+        self.client.upsert(k, {"a": 1})
 
-        # Try to upsert a single xattr
-        rv = self.client.mutate_in(k, SD.upsert('my_attr', 'value',
-                                                xattr=True,
-                                                create_parents=True, _access_deleted=True))
-        self.assertTrue(rv.success)
-
-        rv = self.client.lookup_in(k, SD.get('my_attr', xattr=True, _access_deleted=True))
-        self.assertTrue(rv.exists('my_attr'))
-
-        # trying get before delete
-        rv = self.client.get(k)
-        self.assertTrue(rv.success)
-        self.assertEquals({}, rv.value)
-        self.assertEquals(0, rv.rc)
-        self.assertTrue(rv.cas != 0)
-        self.assertTrue(rv.flags != 0)
-
-        # delete
-        body = self.client.delete(k)
-        self.assertEquals(None, body.value)
-
-        # trying get after delete
+        # Try to upsert a single xattr with _access_deleted
         try:
-            self.client.get(k)
-            self.fail("get should throw NotFoundError when doc deleted")
-        except NotFoundError:
-            pass
-
-        try:
-            self.client.retrieve_in(k, 'my_attr')
-            self.fail("retrieve_in should throw NotFoundError when doc deleted")
-        except NotFoundError:
-            pass
-
-        try:
-            self.client.lookup_in(k, SD.get('my_attr', xattr=True, _access_deleted=True))
-            self.fail("lookup_in should throw NotFoundError when doc deleted")
-        except NotFoundError:
-            pass
+            rv = self.client.mutate_in(k, SD.upsert('my_attr', 'value',
+                                                    xattr=True,
+                                                    create_parents=True), _access_deleted=True)
+        except Exception as e:
+            self.assertEquals("couldn't parse arguments", e.message)
 
     def test_delete_doc_without_xattr(self):
         k = 'xattrs'
@@ -445,55 +411,6 @@ class SubdocXattrSdkTest(SubdocBaseTest):
         self.assertEquals(flags_before, rv.flags)
 
         rv = self.client.lookup_in(k, SD.get('my_attr', xattr=True))
-        self.assertFalse(rv.success)
-        self.assertEquals('Could not execute one or more multi lookups or mutations', rv.errstr)
-        self.assertEquals(73, rv.rc)
-
-    # https://issues.couchbase.com/browse/MB-24104
-    def test_delete_xattr_access_deleted(self):
-        k = 'xattrs'
-
-        self.client.upsert(k, {})
-
-        # trying get non-existing xattr
-        rv = self.client.lookup_in(k, SD.get('my_attr', xattr=True, _access_deleted=True))
-        self.assertFalse(rv.success)
-        self.assertEquals('Could not execute one or more multi lookups or mutations', rv.errstr)
-        self.assertEquals(73, rv.rc)
-
-        # Try to upsert a single xattr
-        rv = self.client.mutate_in(k, SD.upsert('my_attr', 'value',
-                                                xattr=True,
-                                                create_parents=True, _access_deleted=True))
-        self.assertTrue(rv.success)
-
-        rv = self.client.lookup_in(k, SD.get('my_attr', xattr=True))
-        self.assertTrue(rv.exists('my_attr'))
-
-        rv = self.client.get(k)
-        self.assertTrue(rv.success)
-        self.assertEquals({}, rv.value)
-        self.assertEquals(0, rv.rc)
-        cas_before = rv.cas
-        flags_before = rv.flags
-
-        # delete xattr
-        rv = self.client.lookup_in(k, SD.remove('my_attr', xattr=True, _access_deleted=True))
-        self.assertTrue(rv.success)
-        self.assertEquals(1, rv.result_count)
-        self.assertTrue(rv.exists('my_attr'))
-
-        # trying get doc after xattr deleted
-        rv = self.client.get(k)
-        self.assertTrue(rv.success)
-        self.assertEquals({}, rv.value)
-        self.assertEquals(0, rv.rc)
-        self.assertTrue(rv.cas != 0)
-        self.assertTrue(rv.cas != cas_before)
-        self.assertTrue(rv.flags != 0)
-        self.assertEquals(flags_before, rv.flags)
-
-        rv = self.client.lookup_in(k, SD.get('my_attr', xattr=True, _access_deleted=True))
         self.assertFalse(rv.success)
         self.assertEquals('Could not execute one or more multi lookups or mutations', rv.errstr)
         self.assertEquals(73, rv.rc)
@@ -1185,6 +1102,31 @@ class SubdocXattrSdkTest(SubdocBaseTest):
         self.assertEqual(result['total_rows'], 1, "1 document should be returned")
         self.assertEqual(result['rows'][0], {u'value': 2, u'id': u'xattr', u'key': {u'xattr': True}})
 
+    def test_view_one_xattr_index_xattr_on_deleted_docs(self):
+        k = 'xattr'
+
+        self.client.upsert(k, {"xattr": True})
+        self.client.mutate_in(k, SD.upsert('integer', 2, xattr=True))
+
+        shell = RemoteMachineShellConnection(self.master)
+        shell.execute_command("""echo '{
+    "views" : {
+        "view1": {
+             "map" : "function(doc, meta){emit(meta.id, null);}"
+        }
+    },
+    "index_xattr_on_deleted_docs" : true
+    }' > /tmp/views_def.json""")
+        o, e = shell.execute_command(
+            "curl -X PUT -H 'Content-Type: application/json' http://Administrator:password@127.0.0.1:8092/default/_design/ddoc1 -d @/tmp/views_def.json")
+        self.log.info(o)
+        rest = RestConnection(self.master)
+        query = {"stale": "false", "full_set": "true", "connection_timeout": 60000}
+
+        result = rest.query_view('ddoc1', 'view1', self.buckets[0].name, query)
+        self.assertEqual(result['total_rows'], 1, "1 document should be returned")
+        self.assertEqual(result['rows'][0], {u'value': 2, u'id': u'xattr', u'key': {u'xattr': True}})
+
     def test_view_all_xattrs(self):
         k = 'xattr'
 
@@ -1363,6 +1305,48 @@ class SubdocXattrSdkTest(SubdocBaseTest):
                                                                       u'not_to_bes_tested_string'}},
                                              u'id': u'xattr', u'key': {u'xattr': True}})
 
+    def test_view_all_xattrs_many_items_index_xattr_on_deleted_docs(self):
+        key = 'xattr'
+
+        self.client.upsert(key, {"xattr": True})
+        for k, v in SubdocXattrSdkTest.VALUES.iteritems():
+            self.client.mutate_in(key, SD.upsert(k, v, xattr=True))
+
+        shell = RemoteMachineShellConnection(self.master)
+        shell.execute_command("""echo '{
+        "views" : {
+            "view1": {
+                 "map" : "function(doc, meta){emit(doc, meta.xattrs);}"
+            }
+        },
+        "index_xattr_on_deleted_docs" : true
+        }' > /tmp/views_def.json""")
+        o, _ = shell.execute_command(
+                "curl -X PUT -H 'Content-Type: application/json' http://Administrator:password@127.0.0.1:8092/default/_design/ddoc1 -d @/tmp/views_def.json")
+        self.log.info(o)
+
+        ddoc_name = "ddoc1"
+        rest = RestConnection(self.master)
+        query = {"stale": "false", "full_set": "true", "connection_timeout": 60000}
+
+        result = rest.query_view(ddoc_name, "view1", self.buckets[0].name, query)
+        self.assertEqual(result['total_rows'], 1, "1 document should be returned")
+        self.assertEqual(result['rows'][0], {u'value': {u'u_c': u'ABCDEFGHIJKLMNOPQRSTUVWXZYZ',
+                                                        u'low_case': u'abcdefghijklmnoprestuvxyz',
+                                                        u'int_big': 1.0383838392939393e+24, u'double_z': 0,
+                                                        u'arr_ints': [1, 2, 3, 4, 5], u'int_posit': 1,
+                                                        u'int_zero': 0, u'arr_floa': [299792458, 299792458, 299792458],
+                                                        u'float': 299792458, u'float_neg': -299792458, u'double_s': 1.1,
+                                                        u'arr_mixed': [0, 299792458, 1.1], u'double_n': -1.1,
+                                                        u'str_empty': u'', u'a_doubles': [1.1, 2.2, 3.3, 4.4, 5.5],
+                                                        u'd_time': u'2012-10-03 15:35:46.461491',
+                                                        u'arr_arrs': [[299792458, 299792458, 299792458],
+                                                                      [0, 299792458, 1.1], [], [0, 0, 0]],
+                                                        u'int_neg': -1, u'spec_chrs': u'_-+!#@$%&*(){}\\][;.,<>?/',
+                                                        u'json': {u'not_to_bes_tested_string_field1':
+                                                                      u'not_to_bes_tested_string'}},
+                                             u'id': u'xattr', u'key': {u'xattr': True}})
+
     def test_reboot_node(self):
         key = 'xattr'
 
@@ -1451,7 +1435,7 @@ class XattrImportExportTests(ImportExportTests, SubdocBaseTest):
     def _load_all_buckets(self):
         for bucket in self.buckets:
             self.client = SDKClient(scheme="couchbase", hosts=[self.master.ip],
-                                    bucket=bucket.name).cb
+                                    bucket=bucket.name, uhm_options='timeout=3').cb
             for i in xrange(self._num_items):
                 key = 'k_%s_%s' % (i, str(self.master.ip))
                 value = {'xattr_%s' % i: 'value%s' % i}
@@ -1720,7 +1704,7 @@ class XattrEnterpriseBackupRestoreTest(SubdocBaseTest):
         self.assertEquals('Backup repository `example` created successfully in archive `/tmp/backups`', output[0])
         output, error = self.shell.execute_command(
             "/opt/couchbase/bin/cbbackupmgr backup --archive /tmp/backups --repo example "
-            "--cluster couchbase://127.0.0.1 --username Administrator --password password %s" % self.backup_extra_params )
+            "--cluster couchbase://127.0.0.1 --username Administrator --password password %s" % self.backup_extra_params)
         self.log.info(output)
         self.assertEquals('Backup successfully completed', output[1])
         BucketOperationHelper.delete_all_buckets_or_assert(self.servers, self)
@@ -1739,8 +1723,9 @@ class XattrEnterpriseBackupRestoreTest(SubdocBaseTest):
         self.log.info(output)
         output, error = self.shell.execute_command("/opt/couchbase/bin/cbbackupmgr restore --archive /tmp/backups"
                                                    " --repo example --cluster couchbase://127.0.0.1 "
-                                                   "--username Administrator --password password --start %s %s" % (output[
-                                                       0], self.restore_extra_params))
+                                                   "--username Administrator --password password --start %s %s" % (
+                                                       output[
+                                                           0], self.restore_extra_params))
         self.log.info(output)
         self.assertEquals('Restore completed successfully', output[1])
         # https://issues.couchbase.com/browse/MB-23864

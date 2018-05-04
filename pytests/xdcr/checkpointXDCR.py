@@ -5,6 +5,7 @@ from membase.api.exception import XDCRCheckpointException
 from mc_bin_client import MemcachedClient, MemcachedError
 from memcached.helper.data_helper import MemcachedClientHelper, VBucketAwareMemcached
 from xdcrnewbasetests import NodeHelper
+from couchbase_helper.documentgenerator import BlobGenerator
 import time
 
 
@@ -267,7 +268,7 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
 
     """ Initial load, 3 further updates on same key onto vb0
         Note: Checkpointing happens during the second mutation,but only if it's time to checkpoint """
-    def mutate_and_checkpoint(self, n=3):
+    def mutate_and_checkpoint(self, n=3, skip_validation=False):
         count = 1
         # get vb0 active source node
         stats_log = NodeHelper.get_goxdcr_log_dir(self._input.servers[0])\
@@ -294,8 +295,9 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
                             stats_log)
                 if stats_count > 0:
                     self.log.info("Checkpoint recorded as expected")
-                    self.log.info("Validating latest checkpoint")
-                    self.get_and_validate_latest_checkpoint()
+                    if not skip_validation:
+                        self.log.info("Validating latest checkpoint")
+                        self.get_and_validate_latest_checkpoint()
                     break
                 else:
                     self.sleep(20, "Checkpoint not recorded yet, will check after 20s")
@@ -364,6 +366,7 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
             else:
                 self.log.info("Current internal replication = UPR,hence vb_uuid did not change," \
                           "Subsequent _commit_for_checkpoints are expected to pass")
+            self.sleep(self._wait_timeout)
             self.verify_next_checkpoint_passes()
         else:
             self.dest_cluster.rebalance_out_master()
@@ -379,6 +382,7 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
                                 "vb_uuid of vb0 is same before and after TAP rebalance")
                 self.read_chkpt_history_new_vb0node()
                 self.verify_next_checkpoint_fails_after_dest_uuid_change()
+                self.sleep(self._wait_timeout * 2)
                 self.verify_next_checkpoint_passes()
             else:
                 self.log.info("Current internal replication = UPR,hence destination vb_uuid did not change," \
@@ -525,6 +529,7 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
             self.verify_next_checkpoint_passes()
         elif "source" in self._failover:
             self.failover_activevb0_node(self.src_master)
+            self.sleep(self._wait_timeout * 2)
             self.verify_next_checkpoint_passes()
         self.sleep(10)
         self.verify_revid()
@@ -534,7 +539,7 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
         call is successful
     """
     def verify_next_checkpoint_fails_after_dest_uuid_change(self):
-        if not self.mutate_and_checkpoint(n=1):
+        if not self.mutate_and_checkpoint(n=1, skip_validation=True):
             self.log.info ("Checkpointing failed as expected after remote uuid change, not a bug")
             if not self.was_pre_rep_successful():
                 self.log.info("_pre_replicate following the failed checkpoint was unsuccessful, but this is expected")
@@ -582,3 +587,59 @@ class XDCRCheckpointUnitTest(XDCRNewBaseTest):
         if missing_keys:
             self.fail("Some keys are missing at destination")
 
+    def test_checkpointing_with_full_rollback(self):
+        bucket = self.src_cluster.get_buckets()[0]
+        nodes = self.src_cluster.get_nodes()
+
+        # Stop Persistence on Node A & Node B
+        for node in nodes:
+            mem_client = MemcachedClientHelper.direct_client(node, bucket)
+            mem_client.stop_persistence()
+
+        self.src_cluster.pause_all_replications()
+
+        gen = BlobGenerator("C1-", "C1-", self._value_size, end=self._num_items)
+        self.src_cluster.load_all_buckets_from_generator(gen)
+
+        self.src_cluster.resume_all_replications()
+
+        self.sleep(self._checkpoint_interval * 2)
+
+        self.get_and_validate_latest_checkpoint()
+
+        # Perform mutations on the bucket
+        self.async_perform_update_delete()
+
+        self.sleep(self._wait_timeout)
+
+        # Kill memcached on Node A so that Node B becomes master
+        shell = RemoteMachineShellConnection(self.src_cluster.get_master_node())
+        shell.kill_memcached()
+
+        # Start persistence on Node B
+        mem_client = MemcachedClientHelper.direct_client(nodes[1], bucket)
+        mem_client.start_persistence()
+
+        # Failover Node B
+        failover_task = self.src_cluster.async_failover()
+        failover_task.result()
+
+        # Wait for Failover & rollback to complete
+        self.sleep(self._wait_timeout * 5)
+
+        goxdcr_log = NodeHelper.get_goxdcr_log_dir(self._input.servers[0]) \
+                     + '/goxdcr.log*'
+        count1 = NodeHelper.check_goxdcr_log(
+            nodes[0],
+            "Received rollback from DCP stream",
+            goxdcr_log)
+        self.assertGreater(count1, 0, "full rollback not received from DCP as expected")
+        self.log.info("full rollback received from DCP as expected")
+        count2 = NodeHelper.check_goxdcr_log(
+            nodes[0],
+            "Rolled back startSeqno to 0",
+            goxdcr_log)
+        self.assertGreater(count2, 0, "startSeqno not rolled back to 0 as expected")
+        self.log.info("startSeqno rolled back to 0 as expected")
+
+        shell.disconnect()

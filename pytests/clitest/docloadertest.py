@@ -63,7 +63,8 @@ class docloaderTests(CliBaseTest):
                 command = "unzip %ssamples/%s.zip" % (MAC_CB_PATH,
                                                       self.load_filename)
             output, error = self.shell.execute_command(command)
-            self.shell.log_command_output(output, error)
+            if self.debug_logs:
+                self.shell.log_command_output(output, error)
 
         self.verify_results(self.load_filename)
         self.verify_ddoc(self.load_filename)
@@ -122,13 +123,12 @@ class docloaderTests(CliBaseTest):
                                'vb_replica_curr_items', '==', items * available_replicas))
             stats_tasks.append(self.cluster.async_wait_for_stats(self.servers[:self.num_servers], bucket, '',
                                'curr_items_tot', '==', items * (available_replicas + 1)))
-
         for task in stats_tasks:
             task.result(60)
 
     def get_number_of_files(self, file):
         if self.os != "windows":
-            command = "find %s/ -name *.json | wc -l" % (file)
+            command = "find %s/ -name '*.json' | wc -l" % (file)
             output, error = self.shell.execute_command(command)
             self.shell.log_command_output(output, error)
             if 'unable to resolve host' in output[0]:
@@ -138,7 +138,7 @@ class docloaderTests(CliBaseTest):
             else:
                 a = int(output[0])
 
-            command = "find %s/design_docs/ -name *.json | wc -l" % (file)
+            command = "find {0}/design_docs/ -name '*.json' | wc -l".format(file)
             output, error = self.shell.execute_command(command)
             self.shell.log_command_output(output, error)
             if 'unable to resolve host' in output[0]:
@@ -164,7 +164,8 @@ class docloaderTests(CliBaseTest):
             for ddoc_name in ddoc_names:
                 ddoc_json, header = rest.get_ddoc(bucket, ddoc_name)
                 if ddoc_json is not None:
-                    self.log.info('Database Document {0} details : {1}'.format(ddoc_name, json.dumps(ddoc_json)))
+                    self.log.info('Database Document {0} details : {1}'\
+                                  .format(ddoc_name, json.dumps(ddoc_json)))
                 else:
                     raise Exception("ddoc %s is not imported" % ddoc_name)
 
@@ -173,9 +174,11 @@ class docloaderTests(CliBaseTest):
             return []
 
         ddoc_names = []
-        command = "find %s/design_docs/ -name *.json | cut -d \"/\" -f3" % (file)
+        command = "find {0}/design_docs/ -name '*.json' | cut -d \"/\" -f3"\
+                                                               .format(file)
         if self.os == 'mac':
-            command = "find %s/design_docs/ -name *.json | cut -d \"/\" -f4" % (file)
+            command = "find {0}/design_docs/ -name '*.json' | cut -d \"/\" -f4"\
+                                                                 .format(file)
         output, error = self.shell.execute_command(command)
         self.shell.log_command_output(output, error)
 

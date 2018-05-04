@@ -15,6 +15,7 @@ from couchbase_helper.documentgenerator import BlobGenerator
 from remote.remote_util import RemoteMachineShellConnection
 from couchbase_helper.document import DesignDocument, View
 from testconstants import STANDARD_BUCKET_PORT
+from security.rbac_base import RbacBase
 
 class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
     def setUp(self):
@@ -41,6 +42,7 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         self.upgrade_same_version = self.input.param("upgrade_same_version", 0)
         self.ddocs_src = []
         self.ddocs_dest = []
+        self.skip_this_version = False
 
     def create_buckets(self):
         XDCRNewBaseTest.setUp(self)
@@ -62,7 +64,8 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
 
     def tearDown(self):
         try:
-            XDCRNewBaseTest.tearDown(self)
+            if not self.skip_this_version:
+                XDCRNewBaseTest.tearDown(self)
         finally:
             self.cluster.shutdown(force=True)
 
@@ -78,18 +81,27 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
             buckets = self.buckets_on_dest
         bucket_size = self._get_bucket_size(cluster.get_mem_quota(), len(buckets))
 
+        bucket_params = cluster._create_bucket_params(self, size=bucket_size,
+                                                      replicas=self.num_replicas)
+
         if "default" in buckets:
-            bucket_params = XDCRNewBaseTest._create_bucket_params(self, size=bucket_size,
-                                                              replicas=self.num_replicas)
-            cluster.create_default_bucket(bucket_params)
+            cluster.create_default_bucket(bucket_size=bucket_params['size'], num_replicas=bucket_params['replicas'],
+                                          eviction_policy=bucket_params['eviction_policy'],
+                                          bucket_priority=bucket_params['bucket_priority'], lww=bucket_params['lww'])
 
         sasl_buckets = len([bucket for bucket in buckets if bucket.startswith("sasl")])
         if sasl_buckets > 0:
-            cluster.create_sasl_buckets(bucket_size, num_buckets=sasl_buckets)
+            cluster.create_sasl_buckets(bucket_size=bucket_params['size'], num_buckets=sasl_buckets,
+                                        num_replicas=bucket_params['replicas'],
+                                        eviction_policy=bucket_params['eviction_policy'],
+                                        bucket_priority=bucket_params['bucket_priority'], lww=bucket_params['lww'])
 
         standard_buckets = len([bucket for bucket in buckets if bucket.startswith("standard")])
         if standard_buckets > 0:
-            cluster.create_standard_buckets(bucket_size, num_buckets=standard_buckets)
+            cluster.create_standard_buckets(bucket_size=bucket_params['size'], num_buckets=standard_buckets,
+                                            num_replicas=bucket_params['replicas'],
+                                            eviction_policy=bucket_params['eviction_policy'],
+                                            bucket_priority=bucket_params['bucket_priority'], lww=bucket_params['lww'])
 
 
     def _join_all_clusters(self):
@@ -150,7 +162,14 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         self.cluster.rebalance(update_servers + extra_servers, [], update_servers)
 
     def offline_cluster_upgrade(self):
-
+        if self.bucket_type == "ephemeral" and  float(self.initial_version[:3]) < 5.0:
+            self.log.info("Ephemeral buckets not available in version " + str(self.initial_version))
+            self.skip_this_version = True
+            return
+        if self.initial_version[:3] >= self.upgrade_versions[0][:3]:
+            self.log.info("Initial version greater than upgrade version - not supported")
+            self.skip_this_version = True
+            return
         # install on src and dest nodes
         self._install(self.servers[:self.src_init + self.dest_init ])
         upgrade_nodes = self.input.param('upgrade_nodes', "src").split(";")
@@ -181,6 +200,39 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
             nodes_to_upgrade += self.dest_nodes
 
         self._offline_upgrade(nodes_to_upgrade)
+
+        if self.upgrade_versions[0][:3] >= 5.0:
+            if "src" in upgrade_nodes:
+                # Add built-in user to C1
+                testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+                RbacBase().create_user_source(testuser, 'builtin',
+                                              self.src_master)
+
+                self.sleep(10)
+
+                # Assign user to role
+                role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+                RbacBase().add_user_role(role_list,
+                                         RestConnection(self.src_master),
+                                         'builtin')
+
+                self.sleep(10)
+
+            if "dest" in upgrade_nodes:
+                # Add built-in user to C2
+                testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+                RbacBase().create_user_source(testuser, 'builtin',
+                                              self.dest_master)
+
+                self.sleep(10)
+
+                # Assign user to role
+                role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+                RbacBase().add_user_role(role_list,
+                                         RestConnection(self.dest_master),
+                                         'builtin')
+
+                self.sleep(10)
 
         self.log.info("######### Upgrade of C1 and C2 completed ##########")
 
@@ -274,11 +326,22 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
                             node,
                             "Failed to repair connections to target cluster",
                             goxdcr_log)
+                count4 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "received error response from setMeta client. Repairing connection. response status=EINVAL",
+                    goxdcr_log)
+                count5 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "GOGC in new global setting is 0, which is not a valid value and can only have come from "
+                    "upgrade. Changed it to 100 instead.",
+                    goxdcr_log)
                 if count1 > 0 or count2 > 0:
                     self.assertEqual(count3, 0, "Failed to repair connections to target cluster "
-                                        "error message found in " + str(node.ip))
+                                                "error message found in " + str(node.ip))
                     self.log.info("Failed to repair connections to target cluster "
-                                        "error message not found as expected in " + str(node.ip))
+                                  "error message not found as expected in " + str(node.ip))
+                self.assertEqual(count4, 0, "Disconnect errors found in " + str(node.ip))
+                self.assertEqual(count5, 0, "GOGC reset to 0 during upgrade in " + str(node.ip))
 
     def is_goxdcr_migration_successful(self, server):
         count = NodeHelper.check_goxdcr_log(server,
@@ -305,6 +368,14 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         return True
 
     def online_cluster_upgrade(self):
+        if self.bucket_type == "ephemeral" and  float(self.initial_version[:3]) < 5.0:
+            self.log.info("Ephemeral buckets not available in version " + str(self.initial_version))
+            self.skip_this_version = True
+            return
+        if self.initial_version[:3] >= self.upgrade_versions[0][:3]:
+            self.log.info("Initial version greater than upgrade version - not supported")
+            self.skip_this_version = True
+            return
         self._install(self.servers[:self.src_init + self.dest_init])
         prev_initial_version = self.initial_version
         self.initial_version = self.upgrade_versions[0]
@@ -338,6 +409,22 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         if not self.is_goxdcr_migration_successful(self.src_master):
             self.fail("C1: Metadata migration failed after old nodes were removed")
 
+        if self.upgrade_versions[0][:3] >= 5.0:
+            # Add built-in user to C1
+            testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+            RbacBase().create_user_source(testuser, 'builtin',
+                                            self.src_master)
+
+            self.sleep(10)
+
+            # Assign user to role
+            role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+            RbacBase().add_user_role(role_list,
+                                        RestConnection(self.src_master),
+                                        'builtin')
+
+            self.sleep(10)
+
         self._load_bucket(bucket_standard, self.dest_master, self.gen_create, 'create', exp=0)
         self._load_bucket(bucket_default, self.src_master, self.gen_update, 'create', exp=self._expires)
         self._load_bucket(bucket_sasl, self.src_master, self.gen_update, 'create', exp=self._expires)
@@ -369,6 +456,22 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         self._online_upgrade(self.servers[self.src_init + self.dest_init:], self.dest_nodes, False)
         self.dest_master = self.servers[self.src_init]
 
+        if self.upgrade_versions[0][:3] >= 5.0:
+            # Add built-in user to C2
+            testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+            RbacBase().create_user_source(testuser, 'builtin',
+                                          self.dest_master)
+
+            self.sleep(10)
+
+            # Assign user to role
+            role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+            RbacBase().add_user_role(role_list,
+                                     RestConnection(self.dest_master),
+                                     'builtin')
+
+            self.sleep(10)
+
         self.log.info("###### Upgrading C2: completed ######")
 
         if self.pause_xdcr_cluster:
@@ -381,7 +484,7 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         self._load_bucket(bucket_standard, self.dest_master, self.gen_delete, 'delete', exp=0)
         self._load_bucket(bucket_sasl_2, self.dest_master, gen_delete2, 'delete', exp=0)
 
-        self._wait_for_replication_to_catchup()
+        self._wait_for_replication_to_catchup(timeout=600)
         self._post_upgrade_ops()
         self.sleep(120)
         self.verify_results()
@@ -434,13 +537,32 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
                             node,
                             "Failed to repair connections to target cluster",
                             goxdcr_log)
+                count4 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "received error response from setMeta client. Repairing connection. response status=EINVAL",
+                    goxdcr_log)
+                count5 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "GOGC in new global setting is 0, which is not a valid value and can only have come from "
+                    "upgrade. Changed it to 100 instead.",
+                    goxdcr_log)
                 if count1 > 0 or count2 > 0:
                     self.assertEqual(count3, 0, "Failed to repair connections to target cluster "
-                                        "error message found in " + str(node.ip))
+                                                "error message found in " + str(node.ip))
                     self.log.info("Failed to repair connections to target cluster "
-                                        "error message not found as expected in " + str(node.ip))
+                                  "error message not found as expected in " + str(node.ip))
+                self.assertEqual(count4, 0, "Disconnect errors found in " + str(node.ip))
+                self.assertEqual(count5, 0, "GOGC reset to 0 during upgrade in " + str(node.ip))
 
     def incremental_offline_upgrade(self):
+        if self.bucket_type == "ephemeral" and  float(self.initial_version[:3]) < 5.0:
+            self.log.info("Ephemeral buckets not available in version " + str(self.initial_version))
+            self.skip_this_version = True
+            return
+        if self.initial_version[:3] >= self.upgrade_versions[0][:3]:
+            self.log.info("Initial version greater than upgrade version - not supported")
+            self.skip_this_version = True
+            return
         upgrade_seq = self.input.param("upgrade_seq", "src>dest")
         self._install(self.servers[:self.src_init + self.dest_init ])
         self.create_buckets()
@@ -471,6 +593,36 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
         for _seq, node in enumerate(nodes_to_upgrade):
             self._offline_upgrade([node])
             self.sleep(60)
+            if self.upgrade_versions[0][:3] >= 5.0:
+                # Add built-in user to C1
+                testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+                RbacBase().create_user_source(testuser, 'builtin',
+                                              self.src_master)
+
+                self.sleep(10)
+
+                # Assign user to role
+                role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+                RbacBase().add_user_role(role_list,
+                                         RestConnection(self.src_master),
+                                         'builtin')
+
+                self.sleep(10)
+
+                # Add built-in user to C2
+                testuser = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'password': 'password'}]
+                RbacBase().create_user_source(testuser, 'builtin',
+                                              self.dest_master)
+
+                self.sleep(10)
+
+                # Assign user to role
+                role_list = [{'id': 'cbadminbucket', 'name': 'cbadminbucket', 'roles': 'admin'}]
+                RbacBase().add_user_role(role_list,
+                                         RestConnection(self.dest_master),
+                                         'builtin')
+
+                self.sleep(10)
             bucket = self.src_cluster.get_bucket_by_name('sasl_bucket_1')
             itemPrefix = "loadThree" + _seq * 'a'
             gen_create3 = BlobGenerator(itemPrefix, itemPrefix, self._value_size, end=self.num_items)
@@ -479,7 +631,8 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
             itemPrefix = "loadFour" + _seq * 'a'
             gen_create4 = BlobGenerator(itemPrefix, itemPrefix, self._value_size, end=self.num_items)
             self._load_bucket(bucket, self.src_master, gen_create4, 'create', exp=0)
-            self._wait_for_replication_to_catchup()
+
+        self._wait_for_replication_to_catchup(timeout=600)
         self.merge_all_buckets()
         self.verify_results()
         self.sleep(self.wait_timeout * 5, "Let clusters work for some time")
@@ -499,11 +652,23 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
                             node,
                             "Failed to repair connections to target cluster",
                             goxdcr_log)
+                count4 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "received error response from setMeta client. Repairing connection. response status=EINVAL",
+                    goxdcr_log)
+                count5 = NodeHelper.check_goxdcr_log(
+                    node,
+                    "GOGC in new global setting is 0, which is not a valid value and can only have come from "
+                    "upgrade. Changed it to 100 instead.",
+                    goxdcr_log)
                 if count1 > 0 or count2 > 0:
                     self.assertEqual(count3, 0, "Failed to repair connections to target cluster "
-                                        "error message found in " + str(node.ip))
+                                                "error message found in " + str(node.ip))
                     self.log.info("Failed to repair connections to target cluster "
-                                        "error message not found as expected in " + str(node.ip))
+                                  "error message not found as expected in " + str(node.ip))
+                self.assertEqual(count4, 0, "Disconnect errors found in " + str(node.ip))
+                self.assertEqual(count5, 0, "GOGC reset to 0 during upgrade in " + str(node.ip))
+
     def _operations(self):
         # TODO: there are not tests with views
         if self.ddocs_num_src:
@@ -617,8 +782,16 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
             self.sleep(self.expire_time)
 
     def test_backward_compatibility(self):
+        if self.bucket_type == "ephemeral" and  float(self.initial_version[:3]) < 5.0:
+            self.log.info("Ephemeral buckets not available in version " + str(self.initial_version))
+            self.skip_this_version = True
+            return
         self.c1_version = self.initial_version
         self.c2_version = self.upgrade_versions[0]
+        if self.c1_version[:3] >= self.c2_version[:3]:
+            self.log.info("Initial version greater than upgrade version - not supported")
+            self.skip_this_version = True
+            return
         # install older version on C1
         self._install(self.servers[:self.src_init])
         #install latest version on C2
@@ -693,8 +866,19 @@ class UpgradeTests(NewUpgradeBaseTest,XDCRNewBaseTest):
                             node,
                             "Failed to repair connections to target cluster",
                             goxdcr_log)
+                count4 = NodeHelper.check_goxdcr_log(
+                            node,
+                            "received error response from setMeta client. Repairing connection. response status=EINVAL",
+                            goxdcr_log)
+                count5 = NodeHelper.check_goxdcr_log(
+                            node,
+                            "GOGC in new global setting is 0, which is not a valid value and can only have come from "
+                            "upgrade. Changed it to 100 instead.",
+                            goxdcr_log)
                 if count1 > 0 or count2 > 0:
                     self.assertEqual(count3, 0, "Failed to repair connections to target cluster "
                                         "error message found in " + str(node.ip))
                     self.log.info("Failed to repair connections to target cluster "
                                         "error message not found as expected in " + str(node.ip))
+                self.assertEqual(count4, 0, "Disconnect errors found in " + str(node.ip))
+                self.assertEqual(count5, 0, "GOGC reset to 0 during upgrade in " + str(node.ip))

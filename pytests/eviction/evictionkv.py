@@ -84,34 +84,34 @@ class EvictionKV(EvictionBase):
 
         # we want to have keys expire after all the key are initialized, thus the below parameter
         init_time_delay = self.input.param("init_time_delay", 30)
-        test_time_in_minutes = self.input.param("test_time_in_minutes", 30)
-
+        initial_key_set_time = []
         # rampup - create a certain number of keys
         float_creation_chunks = key_float / keys_expired_per_interval
-        print 'float_creation_chunks', float_creation_chunks
+
         for i in range(float_creation_chunks):
-            # print 'setting', keys_expired_per_interval, ' keys to expire in', expiry_time * (i+1)
             for j in range(keys_expired_per_interval):
                 key = str(uuid.uuid4()) + str(i) + str(j)
                 client.set(key, init_time_delay + expiry_time * (i + 1), 0, key)
-
-        for i in range(test_time_in_minutes * 60 / expiry_time):
-
+            #pause before second chunk gets set 
+            time.sleep(0.01)
+            initial_key_set_time.append(time.time())
+        self.sleep(init_time_delay + expiry_time - (time.time() - initial_key_set_time[0]),
+                   "Waiting for first chunk to expire")
+        for chunk in range(float_creation_chunks):
             key_set_time = int(time.time())
 
-            # ClusterOperationHelper.set_expiry_pager_sleep_time(self.master, 'default')
-            # testuuid = uuid.uuid4()
             keys = ["key_%s_%d" % (uuid.uuid4(), i) for i in range(keys_expired_per_interval)]
-            self.log.info("pushing keys with expiry set to {0}".format(expiry_time))
+            self.log.info("pushing keys with expiry set to {0}".format(expiry_time * float_creation_chunks))
             for key in keys:
                 try:
-                    client.set(key, expiry_time + key_float / expiry_time, 0, key)
+                    client.set(key, expiry_time * float_creation_chunks, 0, key)
                 except mc_bin_client.MemcachedError as error:
                     msg = "unable to push key : {0} to bucket : {1} error : {2}"
                     self.log.error(msg.format(key, client.vbucketId, error.status))
                     self.fail(msg.format(key, client.vbucketId, error.status))
-            self.log.info("inserted {0} keys with expiry set to {1}".format(len(keys), expiry_time))
-            self.log.info('sleeping {0} seconds'.format(expiry_time - (time.time() - key_set_time)))
+            #Buffer for the keys to get initialize
+            time.sleep(5)
+            self.log.info("inserted {0} keys with expiry set to {1}".format(len(keys), expiry_time * float_creation_chunks))
 
             compacted = self.cluster.compact_bucket(self.master, 'default')
             # have the compactor do the expiry
@@ -120,9 +120,9 @@ class EvictionKV(EvictionBase):
                 return
             else:
                 self.assertTrue(compacted, msg="unable compact_bucket")
-
             self.cluster.wait_for_stats([self.master], "default", "", "curr_items", "==", key_float, timeout=30)
-            time.sleep(expiry_time - (time.time() - key_set_time))
+            exp_time = expiry_time - (time.time() - key_set_time)
+            self.sleep(exp_time)
 
     def test_verify_expiry(self):
         """
@@ -215,6 +215,11 @@ class EvictionKV(EvictionBase):
                                     "curr_items", "==", 0, timeout=300)
 
     def test_ephemeral_bucket_stats(self):
+        '''
+        @summary: We load bucket to 85% of its capacity and then validate
+        the ephemeral stats for it. We then again load bucket by 50% of 
+        exiting capacity and again validate stats.
+        '''
         shell = RemoteMachineShellConnection(self.master)
         rest = RestConnection(self.servers[0])
 
@@ -224,6 +229,7 @@ class EvictionKV(EvictionBase):
                                                               self.num_items, percentage=0.85)
 
         self.log.info('Memory almost full. Getting stats...')
+        time.sleep(10)
         output, error = shell.execute_command("/opt/couchbase/bin/cbstats localhost:11210 -b default"
                                               " all -u Administrator -p password | grep ephemeral")
         if self.input.param('eviction_policy', 'noEviction') == 'noEviction':
@@ -231,12 +237,14 @@ class EvictionKV(EvictionBase):
                                ' ep_dcp_ephemeral_backfill_type:                        buffered',
                                ' ep_ephemeral_full_policy:                              fail_new_data',
                                ' ep_ephemeral_metadata_purge_age:                       259200',
+                               ' ep_ephemeral_metadata_purge_chunk_duration:            20',
                                ' ep_ephemeral_metadata_purge_interval:                  60'], output)
         else:
             self.assertEquals([' ep_bucket_type:                                        ephemeral',
                                ' ep_dcp_ephemeral_backfill_type:                        buffered',
                                ' ep_ephemeral_full_policy:                              auto_delete',
                                ' ep_ephemeral_metadata_purge_age:                       259200',
+                               ' ep_ephemeral_metadata_purge_chunk_duration:            20',
                                ' ep_ephemeral_metadata_purge_interval:                  60'], output)
 
         output, error = shell.execute_command("/opt/couchbase/bin/cbstats localhost:11210 -b default "
@@ -255,15 +263,13 @@ class EvictionKV(EvictionBase):
 
         mc_client = MemcachedClientHelper.direct_client(self.servers[0], self.buckets[0])
 
-        for i in xrange(200):
-            key = random.randint(0, 1200)
-            mc_client.get(EphemeralBucketsOOM.KEY_ROOT + str(key))
-
         # load some more, this should trigger some deletes
         # add ~50% of new items
         for i in range(item_count, int(item_count * 1.5)):
             try:
                 mc_client.set(EphemeralBucketsOOM.KEY_ROOT + str(i), 0, 0, 'a' * self.value_size)
+                if i%3000 == 0:#providing buffer for nrueviction of items
+                    time.sleep(10)
             except:
                 if self.input.param('eviction_policy', 'noEviction') == 'noEviction':
                     break
@@ -316,7 +322,7 @@ class EphemeralBackupRestoreTest(EvictionBase):
         generate_load = BlobGenerator(EphemeralBucketsOOM.KEY_ROOT, 'param2', self.value_size, start=0,
                                       end=self.num_items)
         self._load_all_ephemeral_buckets_until_no_more_memory(self.servers[0], generate_load, "create", 0,
-                                                              self.num_items, percentage=0.80)
+                                                              self.num_items, percentage=0.8)
 
     # https://issues.couchbase.com/browse/MB-23992
     def test_backup_restore(self):
@@ -460,7 +466,7 @@ class EphemeralBucketsOOM(EvictionBase, DCPBase):
         generate_load = BlobGenerator(EphemeralBucketsOOM.KEY_ROOT, 'param2', self.value_size, start=0,
                                       end=self.num_items)
         self._load_all_ephemeral_buckets_until_no_more_memory(self.servers[0], generate_load, "create", 0,
-                                                              self.num_items, percentage=0.8)
+                                                              self.num_items, percentage=0.80)
 
         self.log.info('Memory is full')
 
@@ -474,10 +480,6 @@ class EphemeralBucketsOOM(EvictionBase, DCPBase):
         item_count = rest.get_bucket(self.buckets[0]).stats.itemCount
 
         self.log.info('Reached OOM, the number of items is {0}'.format(item_count))
-
-        # figure out how many items were loaded and load a certain percentage more
-        item_count = rest.get_bucket(self.buckets[0]).stats.itemCount
-        self.log.info('The number of items is {0}'.format(item_count))
 
         keys_that_were_accessed = []
 
@@ -499,14 +501,18 @@ class EphemeralBucketsOOM(EvictionBase, DCPBase):
                     deleted_keys.append(index)
                     num += 1
         self.assertEquals([], deleted_keys)
-
+        
         for i in xrange(200):
             key = random.randint(0, 1200)
             mc_client.get(EphemeralBucketsOOM.KEY_ROOT + str(key))
             keys_that_were_accessed.append(key)
         # add ~20% of new items
-        for i in range(item_count, int(item_count * 1.2)):
-            mc_client.set(EphemeralBucketsOOM.KEY_ROOT + str(i), 0, 0, 'a' * self.value_size)
+        try:
+            for i in range(item_count, int(item_count * 1.2)):
+                mc_client.set(EphemeralBucketsOOM.KEY_ROOT + str(i), 0, 0, 'a' * self.value_size)
+        except mc_bin_client.MemcachedError:
+            self.log.info ("OOM Reached NRU Started")
+            time.sleep(15)
 
         item_count = rest.get_bucket(self.buckets[0]).stats.itemCount
         self.log.info('The number of items is {0}'.format(item_count))
@@ -540,12 +546,16 @@ class EphemeralBucketsOOM(EvictionBase, DCPBase):
             try:
                 mc_client.get(EphemeralBucketsOOM.KEY_ROOT + str(key))
                 keys_that_were_accessed.append(key)
-            except mc_bin_client.MemcachedError:
+            except mc_bin_client.MemcachedError: 
                 self.log.info('key %s already deleted' % key)
         # add ~15% of new items
-        for i in range(int(item_count * 1.2), int(item_count * 1.4)):
-            mc_client.set(EphemeralBucketsOOM.KEY_ROOT + str(i), 0, 0, 'a' * self.value_size)
-            keys_that_were_accessed.append(i)
+        try:
+            for i in range(int(item_count * 1.2), int(item_count * 1.4)):
+                mc_client.set(EphemeralBucketsOOM.KEY_ROOT + str(i), 0, 0, 'a' * self.value_size)
+                keys_that_were_accessed.append(i)
+        except mc_bin_client.MemcachedError:
+            self.log.info ("OOM Reached NRU Started")
+            time.sleep(15)
 
         item_count = rest.get_bucket(self.buckets[0]).stats.itemCount
         self.log.info('The number of items is {0}'.format(item_count))

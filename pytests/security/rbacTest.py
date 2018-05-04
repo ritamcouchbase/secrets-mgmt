@@ -128,7 +128,8 @@ class rbacTest(ldaptest):
         for user in user_list:
             status, content, header =  rbacmain(self.master,self.auth_type)._set_user_roles(user_name=user[0],payload=payload)
             self.assertFalse(status,"Incorrect status for incorrect role name")
-            if msg != content:
+            content = json.loads(content)
+            if msg not in content:
                 self.assertFalse(True,"Message shown is incorrect")
 
     def test_role_assign_incorrect_bucket_name(self):
@@ -138,7 +139,8 @@ class rbacTest(ldaptest):
         for user in user_list:
             status, content, header =  rbacmain(self.master,self.auth_type)._set_user_roles(user_name=user[0],payload=payload)
             self.assertFalse(status,"Incorrect status for incorrect role name")
-            if msg != content:
+            content = json.loads(content)
+            if msg not in content:
                 self.assertFalse(True,"Message shown is incorrect")
 
     '''
@@ -367,7 +369,7 @@ class rbacTest(ldaptest):
                             "ip":self.ipAddress, "port":123456}
         elif ops == 'remove':
             status, content, header = rbacmain(self.master,self.auth_type)._delete_user(userid[0])
-            expectedResults = {"identity:source":"saslauthd","identity:user":self.user_id,
+            expectedResults = {"identity:source":source,"identity:user":userid[0],
                            "real_userid:source":"ns_server","real_userid:user":"Administrator",
                             "ip":self.ipAddress, "port":123456}
         fieldVerification, valueVerification = Audit.validateEvents(expectedResults)

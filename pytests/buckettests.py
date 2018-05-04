@@ -11,7 +11,7 @@ from testconstants import LINUX_COUCHBASE_SAMPLE_PATH
 from testconstants import WIN_COUCHBASE_BIN_PATH
 from testconstants import WIN_COUCHBASE_SAMPLE_PATH
 from testconstants import COUCHBASE_FROM_WATSON, COUCHBASE_FROM_4DOT6,\
-                          COUCHBASE_FROM_SPOCK
+                          COUCHBASE_FROM_SPOCK, COUCHBASE_FROM_VULCAN
 from scripts.install import InstallerJob
 
 class CreateBucketTests(BaseTestCase):
@@ -126,8 +126,9 @@ class CreateBucketTests(BaseTestCase):
             serverInfo = self.servers[0]
             shell = RemoteMachineShellConnection(serverInfo)
             time.sleep(5)
-            output, error = shell.execute_command("curl -v -u Administrator:password \
-                            http://{0}:8091/logs | grep '{1}'".format(serverInfo.ip, self.log_message))
+            output, error = shell.execute_command("curl -g -v -u Administrator:password \
+                            http://{0}:8091/logs | grep '{1}'".format(serverInfo.ip,
+                                                                      self.log_message))
             if not output:
                 self.log.info("message {0} is not in log".format(self.log_message))
             elif output:
@@ -149,13 +150,14 @@ class CreateBucketTests(BaseTestCase):
         except Exception, e:
             if e:
                 print e
+        self.sleep(10)
         self.log.info("Add new user after reset node! ")
         self.add_built_in_server_user(node=self.master)
         if status:
             if self.node_version[:5] in COUCHBASE_FROM_WATSON:
                 self.rest.set_indexer_storage_mode(storageMode="memory_optimized")
             shell = RemoteMachineShellConnection(self.master)
-            shell.execute_command("""curl -v -u Administrator:password \
+            shell.execute_command("""curl -g -v -u Administrator:password \
                          -X POST http://{0}:8091/sampleBuckets/install \
                       -d  '["travel-sample"]'""".format(self.master.ip))
             shell.disconnect()
@@ -218,8 +220,6 @@ class CreateBucketTests(BaseTestCase):
             use rest to reset node to set services correctly: index,kv,n1ql """
         self.rest.force_eject_node()
 
-        self.log.info("Add new user after reset node! ")
-        self.add_built_in_server_user(node=self.master)
         shell = RemoteMachineShellConnection(self.master)
         set_index_storage_type = ""
         if self.node_version[:5] in COUCHBASE_FROM_WATSON:
@@ -234,6 +234,8 @@ class CreateBucketTests(BaseTestCase):
         else:
             self.assertEqual(o[0], "SUCCESS: init/edit localhost")
 
+        self.log.info("Add new user after reset node! ")
+        self.add_built_in_server_user(node=self.master)
         shell = RemoteMachineShellConnection(self.master)
         cluster_flag = "-n"
         bucket_quota_flag = "-s"
@@ -243,13 +245,14 @@ class CreateBucketTests(BaseTestCase):
             bucket_quota_flag = "-m"
             data_set_location_flag = "-d"
         shell.execute_command("{0}cbdocloader -u Administrator -p password \
-                      {3} {1} -b travel-sample {4} 100 {5} {2}travel-sample.zip" \
+                      {3} {1}:{6} -b travel-sample {4} 100 {5} {2}travel-sample.zip" \
                                                       .format(self.bin_path,
                                                        self.master.ip,
                                                        self.sample_path,
                                                        cluster_flag,
                                                        bucket_quota_flag,
-                                                       data_set_location_flag))
+                                                       data_set_location_flag,
+                                                       self.master.port))
         shell.disconnect()
 
         buckets = RestConnection(self.master).get_buckets()
@@ -300,6 +303,73 @@ class CreateBucketTests(BaseTestCase):
                                        .format(index_name))
         else:
             self.log.info("There is extra index %s" % index_name)
+
+    def test_cli_bucket_maxttl_setting(self):
+        """ couchbase-cli does not have option to reset the node yet
+            use rest to reset node to set services correctly: index,kv,n1ql """
+        if self.node_version[:5] in COUCHBASE_FROM_VULCAN:
+            self.rest.force_eject_node()
+            shell = RemoteMachineShellConnection(self.master)
+            set_index_storage_type = ""
+            set_index_storage_type = " --index-storage-setting=memopt "
+            options = ' --cluster-port=8091 \
+                        --cluster-ramsize=300 \
+                        --cluster-index-ramsize=300 \
+                        --services=data,index,query %s ' % set_index_storage_type
+            o, e = shell.execute_couchbase_cli(cli_command="cluster-init", options=options)
+            self.assertEqual(o[0], 'SUCCESS: Cluster initialized')
+
+            self.log.info("Add new user after reset node! ")
+            self.add_built_in_server_user(node=self.master)
+            shell = RemoteMachineShellConnection(self.master)
+            bucket_type = self.input.param("bucket_type", "couchbase")
+            options = ' --bucket=default \
+                            --bucket-type={0} \
+                            --bucket-port=11222 \
+                            --bucket-ramsize=200 \
+                            --max-ttl=400 \
+                            --wait '.format(bucket_type)
+            o, e = shell.execute_couchbase_cli(cli_command="bucket-create", options=options)
+            self.assertEqual(o[0], 'SUCCESS: Bucket created')
+
+            cluster_flag = "-c"
+            bucket_quota_flag = "-m"
+            data_set_location_flag = "-d"
+            shell.execute_command("{0}cbdocloader -u Administrator -p password \
+                          {3} {1} -b default {4} 100 {5} {2}travel-sample.zip" \
+                                                          .format(self.bin_path,
+                                                           self.master.ip,
+                                                           self.sample_path,
+                                                           cluster_flag,
+                                                           bucket_quota_flag,
+                                                           data_set_location_flag))
+            shell.disconnect()
+
+            buckets = RestConnection(self.master).get_buckets()
+            for bucket in buckets:
+                if bucket.name != "default":
+                    self.fail("default bucket did not get created")
+
+            """ check for load data into travel-sample bucket """
+            end_time = time.time() + 120
+            while time.time() < end_time:
+                self.sleep(10)
+                num_actual = self.get_item_count(self.master,"default")
+                if int(num_actual) == self.total_items_travel_sample:
+                    break
+                self.assertTrue(int(num_actual) == self.total_items_travel_sample,
+                                "Items number expected %s, actual %s" % (
+                                        self.total_items_travel_sample, num_actual))
+            self.log.info("Total items %s " % num_actual)
+            self.sleep(400, "waiting for docs to expire per maxttl rule")
+            self.expire_pager([self.master])
+            num_actual = self.get_item_count(self.master, "default")
+            if int(num_actual) == 0:
+                self.fail("Item count is not 0 after maxttl has elapsed")
+            else:
+                self.log.info("SUCCESS: Item count is 0 after maxttl has elapsed")
+        else:
+            self.log.info("This test is not designed to run in pre-vulcan(5.5.0) versions")
 
     # Start of tests for ephemeral buckets
     #

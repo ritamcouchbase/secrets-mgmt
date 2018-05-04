@@ -1,6 +1,5 @@
 from base_2i import BaseSecondaryIndexingTests
 from membase.api.rest_client import RestConnection, RestHelper
-from remote.remote_util import RemoteMachineShellConnection
 from membase.helper.cluster_helper import ClusterOperationHelper
 
 class SecondaryIndexingClusterOpsTests(BaseSecondaryIndexingTests):
@@ -51,17 +50,30 @@ class SecondaryIndexingClusterOpsTests(BaseSecondaryIndexingTests):
 
     def test_flush_bucket_and_query(self):
         #Initialization operation
-        self.run_multi_operations(buckets = self.buckets,
-            query_definitions = self.query_definitions,
-            create_index = True, drop_index = False,
-            query_with_explain = True, query = True)
+        self.run_multi_operations(buckets=self.buckets,
+            query_definitions=self.query_definitions,
+            create_index=True, drop_index=False,
+            query_with_explain=True, query=True)
         #Remove bucket and recreate it
         for bucket in self.buckets:
             self.rest.flush_bucket(bucket.name)
-        self.sleep(2)
-        #Query and bucket with empty result set
-        self.multi_query_using_index_with_emptyresult(query_definitions = self.query_definitions,
-             buckets = self.buckets)
+        rollback_exception = True
+        query_try_count = 0
+        while rollback_exception and query_try_count < 10:
+            self.sleep(5)
+            query_try_count += 1
+            #Query and bucket with empty result set
+            try:
+                self.multi_query_using_index_with_emptyresult(
+                    query_definitions=self.query_definitions, buckets=self.buckets)
+                rollback_exception = False
+            except Exception, ex:
+                msg = "Indexer rollback"
+                if msg not in str(ex):
+                    rollback_exception = False
+                    self.log.info(ex)
+                    raise
+        self.assertFalse(rollback_exception, "Indexer still in rollback after 50 secs.")
 
     def test_delete_create_bucket_and_query(self):
     	#Initialization operation
@@ -113,6 +125,7 @@ class SecondaryIndexingClusterOpsTests(BaseSecondaryIndexingTests):
             query_definitions = self.query_definitions,
             create_index = True, drop_index = False,
             query_with_explain = False, query = False)
+        self.sleep(20)
         self._verify_bucket_count_with_index_count()
         try:
             # Run operations expiry and deletion
@@ -123,14 +136,39 @@ class SecondaryIndexingClusterOpsTests(BaseSecondaryIndexingTests):
                 tasks.append(self.cluster.async_compact_bucket(self.master,bucket))
             for task in tasks:
                 task.result()
-            self.sleep(2)
+            self.sleep(10)
             # run compaction and analyze results
             self.run_multi_operations(buckets = self.buckets, query_definitions = self.query_definitions,
                 create_index = True, drop_index = False, query_with_explain = True, query = True)
         except Exception, ex:
+            self.log.info(str(ex))
             raise
         finally:
             self.run_multi_operations(buckets = self.buckets,
             query_definitions = self.query_definitions,
             create_index = False, drop_index = True,
             query_with_explain = False, query = False)
+
+    def test_maxttl_setting(self):
+        """
+        Load data, create index, check if all docs are indexed
+        Wait until maxttl has elapsed, check if all docs are deleted
+        and the deletes are indexed
+        :return:
+        """
+        maxttl = int(self.input.param("maxttl", None))
+        self.run_multi_operations(buckets = self.buckets,
+            query_definitions = self.query_definitions,
+            create_index = True, drop_index = False,
+            query_with_explain = False, query = False)
+        self.sleep(20)
+        self._verify_bucket_count_with_index_count()
+        self.sleep(maxttl, "waiting for docs to be expired automatically per maxttl rule")
+        self._expiry_pager(self.master)
+        self.sleep(60, "wait for expiry pager to run on all nodes...")
+        for bucket in self.buckets:
+            items = RestConnection(self.master).get_active_key_count(bucket)
+            self.log.info("Docs in source bucket is {0} after maxttl has elapsed".format(items))
+            if items != 0:
+                self.fail("Docs in source bucket is not 0 after maxttl has elapsed")
+        self._verify_bucket_count_with_index_count()

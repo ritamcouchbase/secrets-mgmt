@@ -26,7 +26,7 @@ class QueryHelperTests(BaseTestCase):
         self.docs_per_day = self.input.param("doc-per-day", 49)
         self.use_rest = self.input.param("use_rest", True)
         self.max_verify = self.input.param("max_verify", None)
-        self.item_flag = self.input.param("item_flag", 4042322160)
+        self.item_flag = self.input.param("item_flag", 0)
         self.n1ql_port = self.input.param("n1ql_port", 8093)
         self.dataset = self.input.param("dataset", "default")
         self.groups = self.input.param("groups", "all").split(":")
@@ -148,6 +148,17 @@ class QueryHelperTests(BaseTestCase):
             bucket=bucket, use_gsi_for_secondary=self.use_gsi_for_secondary,
             deploy_node_info=deploy_node_info, defer_build=defer_build, num_replica=self.num_index_replicas)
         log.info(query)
+        # Define Helper Method which will be used for running n1ql queries, create index, drop index
+        self.n1ql_helper = N1QLHelper(shell=self.shell,
+                                      max_verify=self.max_verify,
+                                      buckets=self.buckets,
+                                      item_flag=self.item_flag,
+                                      n1ql_port=self.n1ql_port,
+                                      full_docs_list=self.full_docs_list,
+                                      log=self.log, input=self.input,
+                                      master=self.master,
+                                      use_rest=True
+                                      )
         create_index_task = self.cluster.async_create_index(
             server=self.n1ql_server, bucket=bucket, query=query,
             n1ql_helper=self.n1ql_helper,

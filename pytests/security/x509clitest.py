@@ -154,7 +154,7 @@ class X509clitest(x509tests):
         i =0
         output, error = self._upload_cert_cli()
         output, error = self._retrieve_cluster_cert_extended(self.master)
-        self.assertTrue("CN=My Company Root CA" in output[4],"Mismatch in Subject CN")
+        self.assertTrue("CN=Root Authority" in output[4],"Mismatch in Subject CN")
         self.assertTrue("uploaded" in output[5],"Mismatch in type of certifcate")
         self.assertTrue("Certificate is not signed with cluster CA." in output[9],"Mismatch in warning message")
         self.assertTrue("ns_1@"+self.master.ip in output[10],"Mismatch in node value")

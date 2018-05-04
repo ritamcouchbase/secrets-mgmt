@@ -3,8 +3,6 @@ from TestInput import TestInputSingleton
 from basetestcase import BaseTestCase
 from couchbase_helper.documentgenerator import BlobGenerator
 from membase.api.rest_client import RestConnection
-from tuq import QueryTests
-
 
 class QueryWorkbenchTests(BaseTestCase):
     n1ql_port =8093
@@ -20,9 +18,8 @@ class QueryWorkbenchTests(BaseTestCase):
         "ITEM": 100,
         "NEW_ORDER": 100,
         "ORDERS": 100,
-        "ORDER_LINE": 100,
-        #"default:": 100
-        }
+        "ORDER_LINE": 100}
+        #"default:": 100}
 
     def setUp(self):
         super(QueryWorkbenchTests, self).setUp()
@@ -38,7 +35,7 @@ class QueryWorkbenchTests(BaseTestCase):
                                    ramQuotaMB=int(self.buckets_ram[bucket_name]),
                                    replicaNumber=0,
                                    proxyPort=11218+i)
-            print self.servers[0]
+            self.log.info(self.servers[0])
             #bucket = self.src_cluster.get_bucket_by_name(bucket_name)
         time.sleep(20)
         #self.rest.create_bucket(bucket="default",
@@ -48,18 +45,12 @@ class QueryWorkbenchTests(BaseTestCase):
         self._load_all_buckets(self,self.servers[0], self.gen_create, "create", 0)
         #time.sleep(20)
 
-
-
-
-
     def tearDown(self):
         super(QueryWorkbenchTests, self).tearDown()
-
-
 
     def test_describe(self):
         for bucket_name in self.rest.get_buckets():
             query = "infer %s" % bucket_name
-            print query
+            self.log.info(query)
             result = self.rest.query_tool(query, self.n1ql_port)
-            print result
+            self.log.info(result)

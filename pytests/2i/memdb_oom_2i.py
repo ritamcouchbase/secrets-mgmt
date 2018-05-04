@@ -26,7 +26,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
         rest = RestConnection(self.oomServer)
         if self.indexMemQuota > 256:
             log.info("Setting indexer memory quota to {0} MB...".format(self.indexMemQuota))
-            rest.set_indexer_memoryQuota(indexMemoryQuota=self.indexMemQuota)
+            rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=self.indexMemQuota)
             self.sleep(30)
         self.deploy_node_info = ["{0}:{1}".format(self.oomServer.ip, self.oomServer.port)]
         self.load_query_definitions = []
@@ -40,7 +40,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
                                 query_definitions=self.load_query_definitions,
                                 deploy_node_info=self.deploy_node_info)
         log.info("Setting indexer memory quota to 256 MB...")
-        rest.set_indexer_memoryQuota(indexMemoryQuota=256)
+        rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=256)
         self.sleep(30)
 
     def tearDown(self):
@@ -86,7 +86,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
             indexer_memQuota += 200
             log.info("Increasing Indexer Memory Quota to {0}".format(indexer_memQuota))
             rest = RestConnection(self.oomServer)
-            rest.set_indexer_memoryQuota(indexMemoryQuota=indexer_memQuota)
+            rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=indexer_memQuota)
             self.sleep(120)
             indexer_oom = self._validate_indexer_status_oom()
             if not indexer_oom:
@@ -139,7 +139,14 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
                 log.info("Indexer out of OOM...")
                 break
         self.sleep(60)
-        self.assertFalse(self._validate_indexer_status_oom(), "Indexer still in OOM")
+        check_for_oom = self._validate_indexer_status_oom()
+        count = 0
+        while check_for_oom and count < 15:
+            self.sleep(60)
+            check_for_oom = self._validate_indexer_status_oom()
+            count += 1
+        if count == 15:
+            self.assertFalse(self._validate_indexer_status_oom(), "Indexer still in OOM")
         self._verify_bucket_count_with_index_count(self.load_query_definitions)
         self.multi_query_using_index(buckets=self.buckets,
                     query_definitions=self.load_query_definitions, verify_results=False)
@@ -280,7 +287,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
             used_memory = self.get_indexer_mem_quota()
             #Setting memory to 90 % of used memory.
             set_memory = int(used_memory) * 90/100
-            rest.set_indexer_memoryQuota(indexMemoryQuota=set_memory)
+            rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=set_memory)
             self.sleep(120)
             check = self._validate_indexer_status_oom()
             if check:
@@ -292,7 +299,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
     def test_change_mem_quota_when_index_building(self):
         rest = RestConnection(self.oomServer)
         log.info("Setting indexer memory quota to 700 MB...")
-        rest.set_indexer_memoryQuota(indexMemoryQuota=700)
+        rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=700)
         self.sleep(30)
         query_definitions = []
         for x in range(3):
@@ -319,7 +326,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
                 build_tasks.append(task)
         self.sleep(10)
         log.info("Setting indexer memory quota to 500 MB...")
-        rest.set_indexer_memoryQuota(indexMemoryQuota=500)
+        rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=500)
         self.sleep(30)
         for task in build_tasks:
             task.result()
@@ -340,7 +347,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
         self.create_index(self.buckets[0].name, replica_definition, deploy_node_info)
         self.assertTrue(self._push_indexer_off_the_cliff(), "OOM Can't be achieved")
         self.multi_query_using_index(buckets=self.buckets,
-                    query_definitions=[replica_definition])
+                    query_definitions=[replica_definition], verify_results=False)
 
     def test_oom_create_build_index(self):
         """
@@ -410,7 +417,7 @@ class SecondaryIndexMemdbOomTests(BaseSecondaryIndexingTests):
                     self.load_query_definitions = []
                 break
         log.info("Setting indexer memory quota to 500 MB...")
-        rest.set_indexer_memoryQuota(indexMemoryQuota=500)
+        rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=500)
         self.sleep(180)
         self.assertFalse(self._validate_indexer_status_oom(), "Indexer is still in OOM")
 

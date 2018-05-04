@@ -81,7 +81,7 @@ class dataRoles():
     def _read_only_role_master():
         per_set = {
             "name": "Read Only Role",
-            "permissionSet": "read!False,write!False,statsRead!True,ReadMeta!False,WriteMeta!False"}
+            "permissionSet": "read!False,write!False,statsRead!False,ReadMeta!False,WriteMeta!False"}
         return per_set
 
     @staticmethod
@@ -95,7 +95,7 @@ class dataRoles():
     def _data_backup_master():
         per_set = {
             "name": "Data Backup",
-            "permissionSet": "read!True,write!False,statsRead!True,ReadMeta!False,WriteMeta!False"}
+            "permissionSet": "read!True,write!True,statsRead!True,ReadMeta!False,WriteMeta!False"}
         return per_set
 
     @staticmethod
@@ -157,9 +157,6 @@ class dataRoles():
 
         if role == "no_bucket_access":
             return_role_master = dataRoles._no_bucket_access()
-
-        if role == "bucket_full_access":
-            return_role_master = dataRoles._bucket_admin_role_master()
 
         return return_role_master
 

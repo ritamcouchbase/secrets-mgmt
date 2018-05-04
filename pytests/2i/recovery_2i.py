@@ -203,6 +203,8 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
             raise
 
     def test_server_crash(self):
+        if self.doc_ops:
+            return
         pre_recovery_tasks = self.async_run_operations(phase="before")
         self._run_tasks([pre_recovery_tasks])
         self.get_dgm_for_plasma()
@@ -232,6 +234,8 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
             raise
 
     def test_server_stop(self):
+        if self.doc_ops:
+            return
         pre_recovery_tasks = self.async_run_operations(phase="before")
         self._run_tasks([pre_recovery_tasks])
         self.get_dgm_for_plasma()
@@ -255,6 +259,8 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
             self.sleep(20)
 
     def test_server_restart(self):
+        if self.doc_ops:
+            return
         pre_recovery_tasks = self.async_run_operations(phase="before")
         self._run_tasks([pre_recovery_tasks])
         self.get_dgm_for_plasma()
@@ -301,10 +307,10 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
                 check_rblnc = RestConnection(self.master).monitorRebalance(
                     stop_if_loop=True)
                 self.assertTrue(check_rblnc, msg=msg)
+            self._run_tasks([kvOps_tasks, mid_recovery_tasks])
             rebalance = self.cluster.async_rebalance(
                 self.servers[:self.nodes_init], [], servr_out)
             rebalance.result()
-            self._run_tasks([kvOps_tasks, mid_recovery_tasks])
             #check if the nodes in cluster are healthy
             msg = "Cluster not in Healthy state"
             self.assertTrue(self.wait_until_cluster_is_healthy(), msg)
@@ -491,7 +497,7 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
             self._create_replica_indexes()
             for node in self.nodes_out_list:
                 self.start_firewall_on_node(node)
-                self.sleep(20)
+                self.sleep(60)
             mid_recovery_tasks = self.async_run_operations(phase="in_between")
             self._run_tasks([kvOps_tasks, mid_recovery_tasks])
             post_recovery_tasks = self.async_run_operations(phase="after")
@@ -576,8 +582,10 @@ class SecondaryIndexingRecoveryTests(BaseSecondaryIndexingTests):
         msg = "Cluster not in Healthy state"
         self.assertTrue(self.wait_until_cluster_is_healthy(), msg)
         log.info("==== Cluster in healthy state ====")
+        self.sleep(180)
         self._check_all_bucket_items_indexed()
         post_recovery_tasks = self.async_run_operations(phase="after")
+        self.sleep(180)
         self._run_tasks([post_recovery_tasks])
 
     def test_partial_rollback(self):

@@ -28,8 +28,8 @@ from membase.api.exception import N1QLQueryException, DropIndexException, Create
                                     ServerUnavailableException, BucketFlushFailed, CBRecoveryFailedException, BucketCompactionException, AutoFailoverException
 from remote.remote_util import RemoteMachineShellConnection, RemoteUtilHelper
 from couchbase_helper.documentgenerator import BatchedDocumentGenerator
-from TestInput import TestInputServer
-from testconstants import MIN_KV_QUOTA, INDEX_QUOTA, FTS_QUOTA, COUCHBASE_FROM_4DOT6, THROUGHPUT_CONCURRENCY, ALLOW_HTP
+from TestInput import TestInputServer, TestInputSingleton
+from testconstants import MIN_KV_QUOTA, INDEX_QUOTA, FTS_QUOTA, COUCHBASE_FROM_4DOT6, THROUGHPUT_CONCURRENCY, ALLOW_HTP, CBAS_QUOTA, COUCHBASE_FROM_VERSION_4
 from multiprocessing import Process, Manager, Semaphore
 
 try:
@@ -136,36 +136,43 @@ class NodeInitializeTask(Task):
         if self.index_quota_percent:
             self.index_quota = int((info.mcdMemoryReserved * 2/3) * \
                                       self.index_quota_percent / 100)
-            rest.set_indexer_memoryQuota(username, password, self.index_quota)
+            rest.set_service_memoryQuota(service='indexMemoryQuota', username=username, password=password, memoryQuota=self.index_quota)
         if self.quota_percent:
            self.quota = int(info.mcdMemoryReserved * self.quota_percent / 100)
 
         """ Adjust KV RAM to correct value when there is INDEX
             and FTS services added to node from Watson  """
         index_quota = INDEX_QUOTA
+        kv_quota = int(info.mcdMemoryReserved * 2/3)
         if self.index_quota_percent:
                 index_quota = self.index_quota
         if not self.quota_percent:
             set_services = copy.deepcopy(self.services)
             if set_services is None:
                 set_services = ["kv"]
-            if "index" in set_services and "fts" not in set_services:
-                kv_quota = int(info.mcdMemoryReserved * 2/3) - index_quota
-                if kv_quota > MIN_KV_QUOTA:
-                    if kv_quota < int(self.quota):
-                        self.quota = kv_quota
-                    rest.set_indexer_memoryQuota(indexMemoryQuota=index_quota)
-                else:
-                    self.set_exception(Exception("KV RAM need to be larger than %s MB "
-                                      "at node  %s"  % (MIN_KV_QUOTA, self.server.ip)))
-            elif "index" in set_services and "fts" in set_services:
-                kv_quota = int(info.mcdMemoryReserved * 2/3) - index_quota - FTS_QUOTA
-                if kv_quota > MIN_KV_QUOTA:
-                    if kv_quota < int(self.quota):
-                        self.quota = kv_quota
-                else:
-                    self.set_exception(Exception("KV RAM need to be larger than %s MB "
-                                      "at node %s"  % (MIN_KV_QUOTA, self.server.ip)))
+#             info = rest.get_nodes_self()
+#             cb_version = info.version[:5]
+#             if cb_version in COUCHBASE_FROM_VERSION_4:
+            if "index" in set_services:
+                self.log.info("quota for index service will be %s MB" % (index_quota))
+                kv_quota -= index_quota
+                self.log.info("set index quota to node %s " % self.server.ip)
+                rest.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=index_quota)
+            if "fts" in set_services:
+                self.log.info("quota for fts service will be %s MB" % (FTS_QUOTA))
+                kv_quota -= FTS_QUOTA
+                self.log.info("set both index and fts quota at node %s "% self.server.ip)
+                rest.set_service_memoryQuota(service='ftsMemoryQuota', memoryQuota=FTS_QUOTA)
+            if "cbas" in set_services:
+                self.log.info("quota for cbas service will be %s MB" % (CBAS_QUOTA))
+                kv_quota -= CBAS_QUOTA
+                rest.set_service_memoryQuota(service = "cbasMemoryQuota", memoryQuota=CBAS_QUOTA)
+            if kv_quota < MIN_KV_QUOTA:
+                    raise Exception("KV RAM needs to be more than %s MB"
+                            " at node  %s"  % (MIN_KV_QUOTA, self.server.ip))
+            if kv_quota < int(self.quota):
+                self.quota = kv_quota
+
         rest.init_cluster_memoryQuota(username, password, self.quota)
         rest.set_indexer_storage_mode(username, password, self.gsi_type)
 
@@ -224,6 +231,14 @@ class BucketCreateTask(Task):
         self.enable_replica_index = bucket_params['enable_replica_index']
         self.eviction_policy = bucket_params['eviction_policy']
         self.lww = bucket_params['lww']
+        if 'maxTTL' in bucket_params:
+            self.maxttl = bucket_params['maxTTL']
+        else:
+            self.maxttl = 0
+        if 'compressionMode' in bucket_params:
+            self.compressionMode = bucket_params['compressionMode']
+        else:
+            self.compressionMode = 'passive'
         self.flush_enabled = bucket_params['flush_enabled']
         if bucket_params['bucket_priority'] is None or bucket_params['bucket_priority'].lower() is 'low':
             self.bucket_priority = 3
@@ -270,7 +285,9 @@ class BucketCreateTask(Task):
                                flushEnabled=self.flush_enabled,
                                evictionPolicy=self.eviction_policy,
                                threadsNumber=self.bucket_priority,
-                               lww=self.lww
+                               lww=self.lww,
+                               maxTTL=self.maxttl,
+                               compressionMode=self.compressionMode
                                )
             else:
                 rest.create_bucket(bucket=self.bucket,
@@ -283,7 +300,9 @@ class BucketCreateTask(Task):
                                replica_index=self.enable_replica_index,
                                flushEnabled=self.flush_enabled,
                                evictionPolicy=self.eviction_policy,
-                               lww=self.lww)
+                               lww=self.lww,
+                               maxTTL=self.maxttl,
+                               compressionMode=self.compressionMode)
             self.state = CHECKING
             task_manager.schedule(self)
 
@@ -481,7 +500,7 @@ class RebalanceTask(Task):
                             self.log.error("Old vbuckets: %s, new vbuckets %s" % (self.old_vbuckets, new_vbuckets))
                             raise Exception(msg)
             (status, progress) = self.rest._rebalance_status_and_progress()
-            self.log.info("Rebalance - status: %s, progress: %s", status, progress)
+            self.log.info("Rebalance - status: {}, progress: {:.02f}%".format(status, progress))
             # if ServerUnavailableException
             if progress == -100:
                 self.retry_get_progress += 1
@@ -662,7 +681,7 @@ class XdcrStatsWaitTask(StatsWaitTask):
         self.set_result(True)
 
 class GenericLoadingTask(Thread, Task):
-    def __init__(self, server, bucket, kv_store, batch_size=1, pause_secs=1, timeout_secs=60):
+    def __init__(self, server, bucket, kv_store, batch_size=1, pause_secs=1, timeout_secs=60, compression=True):
         Thread.__init__(self)
         Task.__init__(self, "load_gen_task")
         self.kv_store = kv_store
@@ -671,7 +690,10 @@ class GenericLoadingTask(Thread, Task):
         self.timeout = timeout_secs
         self.server = server
         self.bucket = bucket
-        self.client = VBucketAwareMemcached(RestConnection(server), bucket)
+        if CHECK_FLAG:
+            self.client = VBucketAwareMemcached(RestConnection(server), bucket)
+        else:
+            self.client = VBucketAwareMemcached(RestConnection(server), bucket, compression=compression)
         self.process_concurrency = THROUGHPUT_CONCURRENCY
         # task queue's for synchronization
         process_manager = Manager()
@@ -933,9 +955,10 @@ class GenericLoadingTask(Thread, Task):
 class LoadDocumentsTask(GenericLoadingTask):
 
     def __init__(self, server, bucket, generator, kv_store, op_type, exp, flag=0,
-                 only_store_hash=True, proxy_client=None, batch_size=1, pause_secs=1, timeout_secs=30):
+                 only_store_hash=True, proxy_client=None, batch_size=1, pause_secs=1, timeout_secs=30,
+                 compression=True):
         GenericLoadingTask.__init__(self, server, bucket, kv_store, batch_size=batch_size,pause_secs=pause_secs,
-                                    timeout_secs=timeout_secs)
+                                    timeout_secs=timeout_secs, compression=compression)
 
         self.generator = generator
         self.op_type = op_type
@@ -994,9 +1017,10 @@ class LoadDocumentsTask(GenericLoadingTask):
 
 class LoadDocumentsGeneratorsTask(LoadDocumentsTask):
     def __init__(self, server, bucket, generators, kv_store, op_type, exp, flag=0, only_store_hash=True,
-                 batch_size=1,pause_secs=1, timeout_secs=60):
+                 batch_size=1,pause_secs=1, timeout_secs=60, compression=True):
         LoadDocumentsTask.__init__(self, server, bucket, generators[0], kv_store, op_type, exp, flag=flag,
-                    only_store_hash=only_store_hash, batch_size=batch_size, pause_secs=pause_secs, timeout_secs=timeout_secs)
+                    only_store_hash=only_store_hash, batch_size=batch_size, pause_secs=pause_secs,
+                                   timeout_secs=timeout_secs, compression=compression)
 
         if batch_size == 1:
             self.generators = generators
@@ -1009,7 +1033,7 @@ class LoadDocumentsGeneratorsTask(LoadDocumentsTask):
         # also check number of input generators isn't greater than
         # process_concurrency as too many generators become inefficient
         self.is_high_throughput_mode = False
-        if ALLOW_HTP:
+        if ALLOW_HTP and not TestInputSingleton.input.param("disable_HTP", False):
             self.is_high_throughput_mode = self.op_type == "create" and \
                 self.batch_size > 1 and \
                 len(self.generators) < self.process_concurrency
@@ -1022,6 +1046,7 @@ class LoadDocumentsGeneratorsTask(LoadDocumentsTask):
             self.op_types = op_type
         if isinstance(bucket, list):
             self.buckets = bucket
+        self.compression = compression
 
     def run(self):
         if self.op_types:
@@ -1117,9 +1142,14 @@ class LoadDocumentsGeneratorsTask(LoadDocumentsTask):
         rv = {"err": None, "partitions": None}
 
         try:
-            client = VBucketAwareMemcached(
+            if CHECK_FLAG:
+                client = VBucketAwareMemcached(
+                        RestConnection(self.server),
+                        self.bucket)
+            else:
+                client = VBucketAwareMemcached(
                     RestConnection(self.server),
-                    self.bucket)
+                    self.bucket, compression=self.compression)
             if self.op_types:
                 self.op_type = self.op_types[iterator]
             if self.buckets:
@@ -1271,9 +1301,9 @@ class ESRunQueryCompare(Task):
     def execute(self, task_manager):
         self.es_compare = True
         try:
-            self.log.info("---------------------------------------------------"
-                          "--------------- Query # %s -----------------------"
-                          "------------------------------------------"
+            self.log.info("---------------------------------------"
+                          "-------------- Query # %s -------------"
+                          "---------------------------------------"
                           % str(self.query_index+1))
             try:
                 fts_hits, fts_doc_ids, fts_time, fts_status = \
@@ -1306,10 +1336,10 @@ class ESRunQueryCompare(Task):
             except ServerUnavailableException:
                 self.log.error("ERROR: FTS Query timed out (client timeout=70s)!")
                 self.passed = False
-            if self.es and self.es_query['query']:
+            if self.es and self.es_query:
                 es_hits, es_doc_ids, es_time = self.run_es_query(self.es_query)
                 self.log.info("ES hits for query: %s on %s is %s (took %sms)" % \
-                              (json.dumps(self.es_query['query'],  ensure_ascii=False),
+                              (json.dumps(self.es_query,  ensure_ascii=False),
                                self.es_index_name,
                                es_hits,
                                es_time))
@@ -1350,8 +1380,9 @@ class ESRunQueryCompare(Task):
 
 # This will be obsolete with the implementation of batch operations in LoadDocumentsTaks
 class BatchedLoadDocumentsTask(GenericLoadingTask):
-    def __init__(self, server, bucket, generator, kv_store, op_type, exp, flag=0, only_store_hash=True, batch_size=100, pause_secs=1, timeout_secs=60):
-        GenericLoadingTask.__init__(self, server, bucket, kv_store)
+    def __init__(self, server, bucket, generator, kv_store, op_type, exp, flag=0, only_store_hash=True,
+                 batch_size=100, pause_secs=1, timeout_secs=60, compression=True):
+        GenericLoadingTask.__init__(self, server, bucket, kv_store, compression=compression)
         self.batch_generator = BatchedDocumentGenerator(generator, batch_size)
         self.op_type = op_type
         self.exp = exp
@@ -1483,8 +1514,8 @@ class BatchedLoadDocumentsTask(GenericLoadingTask):
 
 
 class WorkloadTask(GenericLoadingTask):
-    def __init__(self, server, bucket, kv_store, num_ops, create, read, update, delete, exp):
-        GenericLoadingTask.__init__(self, server, bucket, kv_store)
+    def __init__(self, server, bucket, kv_store, num_ops, create, read, update, delete, exp, compression=True):
+        GenericLoadingTask.__init__(self, server, bucket, kv_store, compression=compression)
         self.itr = 0
         self.num_ops = num_ops
         self.create = create
@@ -1568,8 +1599,9 @@ class WorkloadTask(GenericLoadingTask):
         self.kv_store.release_partition(part_num)
 
 class ValidateDataTask(GenericLoadingTask):
-    def __init__(self, server, bucket, kv_store, max_verify=None, only_store_hash=True, replica_to_read=None):
-        GenericLoadingTask.__init__(self, server, bucket, kv_store)
+    def __init__(self, server, bucket, kv_store, max_verify=None, only_store_hash=True, replica_to_read=None,
+                 compression=True):
+        GenericLoadingTask.__init__(self, server, bucket, kv_store, compression=compression)
         self.valid_keys, self.deleted_keys = kv_store.key_set()
         self.num_valid_keys = len(self.valid_keys)
         self.num_deleted_keys = len(self.deleted_keys)
@@ -1660,8 +1692,8 @@ class ValidateDataTask(GenericLoadingTask):
         self.kv_store.release_partition(key)
 
 class ValidateDataWithActiveAndReplicaTask(GenericLoadingTask):
-    def __init__(self, server, bucket, kv_store, max_verify=None):
-        GenericLoadingTask.__init__(self, server, bucket, kv_store)
+    def __init__(self, server, bucket, kv_store, max_verify=None, compression=True):
+        GenericLoadingTask.__init__(self, server, bucket, kv_store, compression=compression)
         self.valid_keys, self.deleted_keys = kv_store.key_set()
         self.num_valid_keys = len(self.valid_keys)
         self.num_deleted_keys = len(self.deleted_keys)
@@ -1735,8 +1767,9 @@ class ValidateDataWithActiveAndReplicaTask(GenericLoadingTask):
         self.kv_store.release_partition(key)
 
 class BatchedValidateDataTask(GenericLoadingTask):
-    def __init__(self, server, bucket, kv_store, max_verify=None, only_store_hash=True, batch_size=100, timeout_sec=5):
-        GenericLoadingTask.__init__(self, server, bucket, kv_store)
+    def __init__(self, server, bucket, kv_store, max_verify=None, only_store_hash=True, batch_size=100,
+                 timeout_sec=5, compression=True):
+        GenericLoadingTask.__init__(self, server, bucket, kv_store, compression=compression)
         self.valid_keys, self.deleted_keys = kv_store.key_set()
         self.num_valid_keys = len(self.valid_keys)
         self.num_deleted_keys = len(self.deleted_keys)
@@ -1806,7 +1839,7 @@ class BatchedValidateDataTask(GenericLoadingTask):
                         self.set_exception(Exception('Key: %s Bad hash result: %d != %d' % (key, crc32.crc32_hash(d), int(value))))
                 else:
                     #value = json.dumps(value)
-                    if d != value:
+                    if json.loads(d) != json.loads(value):
                         self.state = FINISHED
                         self.set_exception(Exception('Key: %s Bad result: %s != %s' % (key, json.dumps(d), value)))
                 if CHECK_FLAG and o != flag:
@@ -1839,8 +1872,9 @@ class BatchedValidateDataTask(GenericLoadingTask):
 
 
 class VerifyRevIdTask(GenericLoadingTask):
-    def __init__(self, src_server, dest_server, bucket, src_kv_store, dest_kv_store, max_err_count=200000, max_verify=None):
-        GenericLoadingTask.__init__(self, src_server, bucket, src_kv_store)
+    def __init__(self, src_server, dest_server, bucket, src_kv_store, dest_kv_store, max_err_count=200000,
+                 max_verify=None, compression=True):
+        GenericLoadingTask.__init__(self, src_server, bucket, src_kv_store, compression=compression)
         from memcached.helper.data_helper import VBucketAwareMemcached as SmartClient
         self.client_src = SmartClient(RestConnection(src_server), bucket)
         self.client_dest = SmartClient(RestConnection(dest_server), bucket)
@@ -1892,7 +1926,7 @@ class VerifyRevIdTask(GenericLoadingTask):
         elif self.itr < (self.num_valid_keys + self.num_deleted_keys):
             # verify deleted/expired keys
             self._check_key_revId(self.src_deleted_keys[self.itr - self.num_valid_keys],
-                                  ignore_meta_data=['expiration'])
+                                  ignore_meta_data=['expiration','cas'])
         self.itr += 1
 
         # show progress of verification for every 50k items
@@ -1959,8 +1993,8 @@ class VerifyRevIdTask(GenericLoadingTask):
             self.state = FINISHED
 
 class VerifyMetaDataTask(GenericLoadingTask):
-    def __init__(self, dest_server, bucket, kv_store, meta_data_store, max_err_count=100):
-        GenericLoadingTask.__init__(self, dest_server, bucket, kv_store)
+    def __init__(self, dest_server, bucket, kv_store, meta_data_store, max_err_count=100, compression=True):
+        GenericLoadingTask.__init__(self, dest_server, bucket, kv_store, compression=compression)
         from memcached.helper.data_helper import VBucketAwareMemcached as SmartClient
         self.client = SmartClient(RestConnection(dest_server), bucket)
         self.valid_keys, self.deleted_keys = kv_store.key_set()
@@ -2037,8 +2071,8 @@ class VerifyMetaDataTask(GenericLoadingTask):
             self.state = FINISHED
 
 class GetMetaDataTask(GenericLoadingTask):
-    def __init__(self, dest_server, bucket, kv_store):
-        GenericLoadingTask.__init__(self, dest_server, bucket, kv_store)
+    def __init__(self, dest_server, bucket, kv_store, compression=True):
+        GenericLoadingTask.__init__(self, dest_server, bucket, kv_store, compression=compression)
         from memcached.helper.data_helper import VBucketAwareMemcached as SmartClient
         self.client = SmartClient(RestConnection(dest_server), bucket)
         self.valid_keys, self.deleted_keys = kv_store.key_set()
@@ -4904,7 +4938,7 @@ class AutoFailoverNodesFailureTask(Task):
         ui_logs = rest.get_logs(10)
         ui_logs_text = [t["text"] for t in ui_logs]
         ui_logs_time = [t["serverTime"] for t in ui_logs]
-        expected_log = "Starting failing over 'ns_1@{}'".format(
+        expected_log = "Starting failing over ['ns_1@{}']".format(
             failed_over_node.ip)
         if expected_log in ui_logs_text:
             failed_over_time = ui_logs_time[ui_logs_text.index(expected_log)]

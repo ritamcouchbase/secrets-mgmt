@@ -1,8 +1,13 @@
 import subprocess, time, os
 from subprocess import call
+from threading import Thread
 from clitest.cli_base import CliBaseTest
+from remote.remote_util import RemoteMachineHelper,\
+                               RemoteMachineShellConnection
 from couchbase_helper.documentgenerator import BlobGenerator
-from membase.api.rest_client import RestConnection
+from membase.api.rest_client import RestConnection, RestHelper
+from testconstants import LOG_FILE_NAMES
+
 from couchbase_helper.document import View
 
 LOG_FILE_NAME_LIST = ["couchbase.log", "diag.log", "ddocs.log", "ini.log", "syslog.tar.gz",
@@ -23,6 +28,7 @@ class CollectinfoTests(CliBaseTest):
         self.expire_time = self.input.param("expire_time", 5)
         self.value_size = self.input.param("value_size", 256)
         self.node_down = self.input.param("node_down", False)
+        self.collect_all_option = self.input.param("collect-all-option", False)
         if self.doc_ops is not None:
             self.doc_ops = self.doc_ops.split(";")
 
@@ -65,7 +71,11 @@ class CollectinfoTests(CliBaseTest):
         """ This is the folder generated after unzip the log package """
         self.shell.delete_files("cbcollect_info*")
 
+        cb_server_started = False
         if self.node_down:
+            """ set autofailover to off """
+            rest = RestConnection(self.master)
+            rest.update_autofailover_settings(False, 60)
             if self.os == 'linux':
                 output, error = self.shell.execute_command(
                                     "killall -9 memcached & killall -9 beam.smp")
@@ -75,24 +85,30 @@ class CollectinfoTests(CliBaseTest):
 
         if self.os != "windows":
             if len(error) > 0:
-                """ Restart cb server if test node down """
-                if self.node_down:
-                    self.shell.start_server()
                 raise Exception("Command throw out error: %s " % error)
 
             for output_line in output:
                 if output_line.find("ERROR") >= 0 or output_line.find("Error") >= 0:
                     if "from http endpoint" in output_line.lower():
                         continue
-                    if self.node_down:
-                        self.shell.start_server()
                     raise Exception("Command throw out error: %s " % output_line)
-        self.verify_results(self, self.log_filename)
-
-        if self.node_down:
-            if self.os == 'linux':
-                self.shell.start_server()
-                self.sleep(self.wait_timeout)
+        try:
+            if self.node_down:
+                if self.os == 'linux':
+                    self.shell.start_server()
+                    rest = RestConnection(self.master)
+                    if RestHelper(rest).is_ns_server_running(timeout_in_seconds=60):
+                        cb_server_started = True
+                    else:
+                        self.fail("CB server failed to start")
+            self.verify_results(self, self.log_filename)
+        finally:
+            if self.node_down and not cb_server_started:
+                if self.os == 'linux':
+                    self.shell.start_server()
+                    rest = RestConnection(self.master)
+                    if not RestHelper(rest).is_ns_server_running(timeout_in_seconds=60):
+                        self.fail("CB server failed to start")
 
     def test_cbcollectinfo_detect_container(self):
         """ this test only runs inside docker host and
@@ -127,17 +143,35 @@ class CollectinfoTests(CliBaseTest):
             if os == "linux":
                 command = "unzip %s" % (zip_file)
                 output, error = self.shell.execute_command(command)
-                self.shell.log_command_output(output, error)
+                self.sleep(2)
+                if self.debug_logs:
+                    self.shell.log_command_output(output, error)
                 if len(error) > 0:
                     raise Exception("unable to unzip the files. Check unzip command output for help")
 
                 command = "ls cbcollect_info*/"
                 output, error = self.shell.execute_command(command)
-                self.shell.log_command_output(output, error)
+                if self.debug_logs:
+                    self.shell.log_command_output(output, error)
                 if len(error) > 0:
                     raise Exception("unable to list the files. Check ls command output for help")
                 missing_logs = False
-                for x in LOG_FILE_NAME_LIST:
+                nodes_services = RestConnection(self.master).get_nodes_services()
+                for node, services in nodes_services.iteritems():
+                    for service in services:
+                        if service.encode("ascii") == "fts" and \
+                                    "fts_diag.json" not in LOG_FILE_NAMES:
+                            LOG_FILE_NAMES.append("fts_diag.json")
+                        if service.encode("ascii") == "index":
+                            if "indexer_mprof.log" not in LOG_FILE_NAMES:
+                                LOG_FILE_NAMES.append("indexer_mprof.log")
+                            if "indexer_pprof.log" not in LOG_FILE_NAMES:
+                                LOG_FILE_NAMES.append("indexer_pprof.log")
+                if self.debug_logs:
+                    self.log.info('\nlog files sample: {0}'.format(LOG_FILE_NAMES))
+                    self.log.info('\nlog files in zip: {0}'.format(output))
+
+                for x in LOG_FILE_NAMES:
                     find_log = False
                     for output_line in output:
                         if output_line.find(x) >= 0:
@@ -157,7 +191,8 @@ class CollectinfoTests(CliBaseTest):
                     for bucket in self.buckets:
                         command = "grep %s cbcollect_info*/stats.log" % (bucket.name)
                         output, error = self.shell.execute_command(command)
-                        self.shell.log_command_output(output, error)
+                        if self.debug_logs:
+                            self.shell.log_command_output(output, error)
                         if len(error) > 0:
                             raise Exception("unable to grep key words. Check grep command output for help")
                         if len(output) == 0:
@@ -166,16 +201,22 @@ class CollectinfoTests(CliBaseTest):
 
                 command = "du -s cbcollect_info*/*"
                 output, error = self.shell.execute_command(command)
-                self.shell.log_command_output(output, error)
+                if self.debug_logs:
+                    self.shell.log_command_output(output, error)
                 empty_logs = False
                 if len(error) > 0:
                     raise Exception("unable to list file size. Check du command output for help")
                 for output_line in output:
                     output_line = output_line.split()
                     file_size = int(output_line[0])
+                    if self.debug_logs:
+                        print "File size: ", file_size
                     if file_size == 0:
-                        empty_logs = True
-                        self.log.error("%s is empty" % (output_line[1]))
+                        if "kv_trace" in output_line[1] and self.node_down:
+                            continue
+                        else:
+                            empty_logs = True
+                            self.log.error("%s is empty" % (output_line[1]))
 
                 if missing_logs:
                     raise Exception("Bad log file package generated. Missing logs")
@@ -216,3 +257,84 @@ class CollectinfoTests(CliBaseTest):
                 raise ex
         self.shell.execute_cbcollect_info("%s.zip" % (self.log_filename))
         self.verify_results(self, self.log_filename)
+
+    def test_default_collect_logs_in_cluster(self):
+        """
+           In a cluster, if we run cbcollectinfo from 1 node, it will collect logs
+           on 1 node only.
+           Initial nodes: 3
+        """
+        gen_load = BlobGenerator('cbcollect', 'cbcollect-', self.value_size,
+                                                            end=self.num_items)
+        self._load_all_buckets(self.master, gen_load, "create", 0)
+        self._wait_for_stats_all_buckets(self.servers[:self.num_servers])
+        self.log.info("Delete old logs files")
+        self.shell.delete_files("%s.zip" % (self.log_filename))
+        self.log.info("Delete old logs directory")
+        self.shell.delete_files("cbcollect_info*")
+        options = ""
+        if self.collect_all_option:
+            options = "--multi-node-diag"
+            self.log.info("Run collect log with --multi-node-diag option")
+        output, error = self.shell.execute_cbcollect_info("%s.zip %s"\
+                                                       % (self.log_filename, options))
+        if output:
+            if self.debug_logs:
+                    self.shell.log_command_output(output, error)
+            for line in output:
+                if "--multi-node-diag" in options:
+                    if "noLogs=1&oneNode=1" in line:
+                        self.log.error("Error line: %s" % line)
+                        self.fail("cbcollect got diag only from 1 node")
+                if not options:
+                    if "noLogs=1" in line:
+                        if "oneNode=1" not in line:
+                            self.log.error("Error line: %s" % line)
+                            self.fail("cbcollect did not set to collect diag only at 1 node ")
+        self.verify_results(self, self.log_filename)
+
+    def test_cbcollectinfo_memory_usuage(self):
+        """
+           Test to make sure cbcollectinfo did not use a lot of memory.
+           We run test with 200K items with size 128 bytes
+        """
+        gen_load = BlobGenerator('cbcollect', 'cbcollect-', self.value_size,
+                                                            end=200000)
+        self._load_all_buckets(self.master, gen_load, "create", 0)
+        self._wait_for_stats_all_buckets(self.servers[:self.num_servers])
+        self.log.info("Delete old logs files")
+        self.shell.delete_files("%s.zip" % (self.log_filename))
+        self.log.info("Delete old logs directory")
+        self.shell.delete_files("cbcollect_info*")
+        options = ""
+        if self.collect_all_option:
+            options = "--multi-node-diag"
+            self.log.info("Run collect log with --multi-node-diag option")
+
+        collect_threads = []
+        col_thread = Thread(target=self.shell.execute_cbcollect_info,
+                                        args=("%s.zip" % (self.log_filename), options))
+        collect_threads.append(col_thread)
+        col_thread.start()
+        monitor_mem_thread = Thread(target=self._monitor_collect_log_mem_process)
+        collect_threads.append(monitor_mem_thread)
+        monitor_mem_thread.start()
+        self.thred_end = False
+        while not self.thred_end:
+            if not col_thread.isAlive():
+                self.thred_end = True
+        for t in collect_threads:
+            t.join()
+
+    def _monitor_collect_log_mem_process(self):
+        mem_stat = []
+        results = []
+        shell = RemoteMachineShellConnection(self.master)
+        vsz, rss = RemoteMachineHelper(shell).monitor_process_memory('cbcollect_info')
+        vsz_delta = max(abs(x - y) for (x, y) in zip(vsz[1:], vsz[:-1]))
+        rss_delta = max(abs(x - y) for (x, y) in zip(rss[1:], rss[:-1]))
+        self.log.info("The largest delta in VSZ: %s KB " % vsz_delta)
+        self.log.info("The largest delta in RSS: %s KB " % rss_delta)
+
+        if vsz_delta > 20000:
+            self.fail("cbcollect_info process spikes up to 20 MB")

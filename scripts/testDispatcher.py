@@ -1,4 +1,3 @@
-
 import sys
 import urllib2
 import urllib
@@ -31,6 +30,17 @@ def getNumberOfServers( iniFile):
     f.close()
     return contents.count('dynamic')
 
+def getNumberOfAddpoolServers(iniFile, addPoolId):
+    f = open(iniFile)
+    contents = f.read()
+    f.close()
+    try:
+        return contents.count(addPoolId)
+    except:
+        return 0
+
+def rreplace(str, pattern, num_replacements):
+    return str.rsplit(pattern, num_replacements)[0]
 
 def main():
 
@@ -42,6 +52,7 @@ def main():
     parser.add_option('-n','--noLaunch', action="store_true", dest='noLaunch', default=False)
     parser.add_option('-c','--component', dest='component', default=None)
     parser.add_option('-p','--poolId', dest='poolId', default='12hour')
+    parser.add_option('-a','--addPoolId', dest='addPoolId', default=None)
     parser.add_option('-t','--test', dest='test', default=False, action='store_true') # use the test Jenkins
     parser.add_option('-s','--subcomponent', dest='subcomponent', default=None)
     parser.add_option('-e','--extraParameters', dest='extraParameters', default=None)
@@ -49,6 +60,8 @@ def main():
     parser.add_option('-u','--url', dest='url', default=None)
     parser.add_option('-j','--jenkins', dest='jenkins', default=None)
     parser.add_option('-b','--branch', dest='branch', default='master')
+    parser.add_option('-f', '--framework', dest='framework', default='testrunner')
+
 
     # dashboardReportedParameters is of the form param1=abc,param2=def
     parser.add_option('-d','--dashboardReportedParameters', dest='dashboardReportedParameters', default=None)
@@ -161,15 +174,40 @@ def main():
                             installParameters = data['installParameters']
                         else:
                             installParameters = 'None'
+                        if 'slave' in data:
+                            slave = data['slave']
+                        else:
+                            slave = 'P0'
+                        if 'owner' in data:
+                            owner = data['owner']
+                        else:
+                            owner = 'QE'
+                        if 'mailing_list' in data:
+                            mailing_list = data['mailing_list']
+                        else:
+                            mailing_list = 'qa@couchbase.com'
 
+                        # if there's an additional pool, get the number
+                        # of additional servers needed from the ini
+                        addPoolServerCount = getNumberOfAddpoolServers(
+                            data['config'],
+                            options.addPoolId)
 
-                        testsToLaunch.append( {'component':data['component'], 'subcomponent':data['subcomponent'],
-                                    'confFile':data['confFile'], 'iniFile':data['config'],
-                                    'serverCount':getNumberOfServers(data['config']), 'timeLimit':data['timeOut'],
-                                    'parameters':data['parameters'], 'initNodes':initNodes,
-                                    'installParameters':installParameters})
-
-
+                        testsToLaunch.append({
+                            'component':data['component'],
+                            'subcomponent':data['subcomponent'],
+                            'confFile':data['confFile'],
+                            'iniFile':data['config'],
+                            'serverCount':getNumberOfServers(data['config']),
+                            'addPoolServerCount': addPoolServerCount,
+                            'timeLimit':data['timeOut'],
+                            'parameters':data['parameters'],
+                            'initNodes':initNodes,
+                            'installParameters':installParameters,
+                            'slave': slave,
+                            'owner': owner,
+                            'mailing_list': mailing_list
+                            })
                 else:
                     print data['component'], data['subcomponent'], ' is not supported in this release'
             else:
@@ -194,6 +232,8 @@ def main():
         launchStringBase = launchStringBase + '-docker'
     if options.test:
         launchStringBase = launchStringBase + '-test'
+    if options.framework.lower() == "jython":
+        launchStringBase = launchStringBase + '-jython'
     elif options.jenkins is not None:
         launchStringBase = launchStringBase + '-' + options.jenkins
 
@@ -202,7 +242,9 @@ def main():
     # this are VM/Docker dependent - or maybe not
     launchString = launchStringBase + '/buildWithParameters?token=test_dispatcher&' + \
                         'version_number={0}&confFile={1}&descriptor={2}&component={3}&subcomponent={4}&' + \
-                         'iniFile={5}&parameters={6}&os={7}&initNodes={8}&installParameters={9}&branch={10}'
+                         'iniFile={5}&parameters={6}&os={7}&initNodes={' \
+                         '8}&installParameters={9}&branch={10}&slave={' \
+                         '11}&owners={12}&mailing_list={13}'
     if options.url is not None:
         launchString = launchString + '&url=' + options.url
 
@@ -230,12 +272,37 @@ def main():
                 serverCount = int(content)
                 print time.asctime( time.localtime(time.time()) ), 'there are', serverCount, ' servers available'
 
-
                 haveTestToLaunch = False
                 i = 0
                 while not haveTestToLaunch and i < len(testsToLaunch):
                     if testsToLaunch[i]['serverCount'] <= serverCount:
-                        haveTestToLaunch = True
+                        if testsToLaunch[i]['addPoolServerCount']:
+                            getAddPoolUrl = 'http://' + SERVER_MANAGER + '/getavailablecount/'
+                            if options.serverType.lower() == 'docker':
+                                # may want to add OS at some point
+                                getAddPoolUrl = getAddPoolUrl + 'docker?os={0}&poolId={1}'.format(
+                                    options.os, options.addPoolId)
+                            else:
+                                getAddPoolUrl = getAddPoolUrl + '{0}?poolId={1}'.format(
+                                    options.os, options.addPoolId)
+
+                            response, content = httplib2.Http(
+                                timeout=60).request(getAddPoolUrl, 'GET')
+                            if response.status != 200:
+                                print time.asctime(time.localtime(
+                                    time.time())), 'invalid server response', content
+                                time.sleep(POLL_INTERVAL)
+                            elif int(content) == 0:
+                                print time.asctime(
+                                    time.localtime(time.time())),\
+                                    'no {0} VMs at this time'.format(options.addPoolId)
+                                i = i + 1
+                            else:
+                                print time.asctime( time.localtime(time.time()) ),\
+                                    "there are {0} {1} servers available".format(int(content), options.addPoolId)
+                                haveTestToLaunch = True
+                        else:
+                            haveTestToLaunch = True
                     else:
                         i = i + 1
 
@@ -268,12 +335,43 @@ def main():
                     print 'getServerURL', getServerURL
 
                     response, content = httplib2.Http(timeout=60).request(getServerURL, 'GET')
-
-
                     print 'response.status', response, content
 
+                    if options.serverType.lower() != 'docker':
+                        # sometimes there could be a race, before a dispatcher process acquires vms,
+                        # another waiting dispatcher process could grab them, resulting in lesser vms
+                        # for the second dispatcher process
+                        if len(json.loads(content)) != testsToLaunch[i]['serverCount']:
+                            continue
 
-                    if response.status == 499:
+                    # get additional pool servers as needed
+                    if testsToLaunch[i]['addPoolServerCount']:
+                        if options.serverType.lower() == 'docker':
+                             getServerURL = 'http://' + SERVER_MANAGER + \
+                                    '/getdockers/{0}?count={1}&os={2}&poolId={3}'. \
+                               format(descriptor,
+                                      testsToLaunch[i]['addPoolServerCount'],
+                                      options.os,
+                                      options.addPoolId)
+
+                        else:
+                            getServerURL = 'http://' + SERVER_MANAGER + \
+                                    '/getservers/{0}?count={1}&expiresin={2}&os={3}&poolId={4}'. \
+                               format(descriptor,
+                                      testsToLaunch[i]['addPoolServerCount'],
+                                      testsToLaunch[i]['timeLimit'], \
+                                      options.os,
+                                      options.addPoolId)
+                        print 'getServerURL', getServerURL
+
+                        response2, content2 = httplib2.Http(timeout=60).request(getServerURL, 'GET')
+                        print 'response2.status', response2, content2
+
+
+
+                    if response.status == 499 or \
+                            (testsToLaunch[i]['addPoolServerCount'] and
+                            response2.status == 499):
                         time.sleep(POLL_INTERVAL) # some error checking here at some point
                     else:
                         # and send the request to the test executor
@@ -290,20 +388,41 @@ def main():
 
 
 
-                        url = launchString.format(options.version, testsToLaunch[i]['confFile'],
-                                    descriptor, testsToLaunch[i]['component'], dashboardDescriptor,
-                                    testsToLaunch[i]['iniFile'],
-                                    urllib.quote( parameters ), options.os, testsToLaunch[i]['initNodes'],
-                                    testsToLaunch[i]['installParameters'], options.branch)
+                        url = launchString.format(options.version,
+                                                  testsToLaunch[i]['confFile'],
+                                                  descriptor,
+                                                  testsToLaunch[i]['component'],
+                                                  dashboardDescriptor,
+                                                  testsToLaunch[i]['iniFile'],
+                                                  urllib.quote(parameters),
+                                                  options.os,
+                                                  testsToLaunch[i]['initNodes'],
+                                                  testsToLaunch[i]['installParameters'],
+                                                  options.branch,
+                                                  testsToLaunch[i]['slave'],
+                                                  urllib.quote(testsToLaunch[i]['owner']),
+                                                  urllib.quote(
+                                                      testsToLaunch[i]['mailing_list']))
 
 
                         if options.serverType.lower() != 'docker':
                             r2 = json.loads(content)
-                            url = url + '&servers=' + urllib.quote(json.dumps(r2).replace(' ',''))
+                            servers = json.dumps(r2).replace(' ','').replace('[','', 1)
+                            servers = rreplace(servers, ']', 1)
+                            url = url + '&servers=' + urllib.quote(servers)
+
+                            if testsToLaunch[i]['addPoolServerCount']:
+                                addPoolServers = content2.replace(' ','')\
+                                                   .replace('[','', 1)
+                                addPoolServers = rreplace(addPoolServers, ']', 1)
+                                url = url + '&addPoolServerId=' +\
+                                      options.addPoolId +\
+                                      '&addPoolServers=' +\
+                                      urllib.quote(addPoolServers)
 
 
                         print '\n', time.asctime( time.localtime(time.time()) ), 'launching ', url
-
+                        print url
 
                         if options.noLaunch:
                             # free the VMs
@@ -336,15 +455,10 @@ def main():
             time.sleep(POLL_INTERVAL)
     #endwhile
 
-
-
     print '\n\n\ndone, everything is launched'
     for i in summary:
         print i['test'], 'was launched at', i['time']
     return
-
-
-
 
 
 if __name__ == "__main__":

@@ -41,6 +41,21 @@ class StableTopFTS(FTSBaseTest):
         self.wait_for_indexing_complete()
         self.validate_index_count(equal_bucket_doc_count=True)
 
+    def test_maxttl_setting(self):
+        self.create_simple_default_index()
+        maxttl = int(self._input.param("maxttl", None))
+        self.sleep(maxttl,
+                "Waiting for expiration at the elapse of bucket maxttl")
+        self._cb_cluster.run_expiry_pager()
+        self.wait_for_indexing_complete(item_count=0)
+        self.validate_index_count(must_equal=0)
+        for index in self._cb_cluster.get_indexes():
+            query = eval(self._input.param("query", str(self.sample_query)))
+            hits, _, _, _ = index.execute_query(query,
+                                             zero_results_ok=True,
+                                             expected_hits=0)
+            self.log.info("Hits: %s" % hits)
+
     def query_in_dgm(self):
         self.create_simple_default_index()
         for index in self._cb_cluster.get_indexes():
@@ -150,13 +165,14 @@ class StableTopFTS(FTSBaseTest):
                                                 consistency_vectors=self.consistency_vectors)
             self.log.info("Hits: %s" % hits)
             try:
-                shell = RemoteMachineShellConnection(fts_node)
-                shell.stop_server()
+                from fts_base import NodeHelper
+                NodeHelper.stop_couchbase(fts_node)
                 for i in xrange(self.consistency_vectors.values()[0].values()[0]):
                     self.async_perform_update_delete(self.upd_del_fields)
             finally:
-                shell = RemoteMachineShellConnection(fts_node)
-                shell.start_server()
+                NodeHelper.start_couchbase(fts_node)
+                NodeHelper.wait_service_started(fts_node)
+
             # "status":"remote consistency error" => expected_hits=-1
             hits, _, _, _ = index.execute_query(query,
                                                 zero_results_ok=zero_results_ok,
@@ -245,14 +261,12 @@ class StableTopFTS(FTSBaseTest):
         # create "emp" bucket
         self._cb_cluster.create_standard_buckets(bucket_size=1000,
                                                  name="emp",
-                                                 port=11234,
                                                  num_replicas=0)
         emp = self._cb_cluster.get_bucket_by_name('emp')
 
         # create "wiki" bucket
         self._cb_cluster.create_standard_buckets(bucket_size=1000,
                                                  name="wiki",
-                                                 port=11235,
                                                  num_replicas=0)
         wiki = self._cb_cluster.get_bucket_by_name('wiki')
 
@@ -422,7 +436,6 @@ class StableTopFTS(FTSBaseTest):
                                                 stat_name='num_recs_to_persist')
         self.log.info("Data(metadata + docs) in write queue is {0}".
                       format(stat_value))
-        self.partitions_per_pindex = 2
         new_plan_param = self.construct_plan_params()
         index.index_definition['planParams'] = \
             index.build_custom_plan_params(new_plan_param)
@@ -500,7 +513,9 @@ class StableTopFTS(FTSBaseTest):
         index = self.create_index(
             bucket=self._cb_cluster.get_bucket_by_name('default'),
             index_name="custom_index")
-        self.create_es_index_mapping(index.es_custom_map, index.index_definition)
+        if self.es:
+            self.create_es_index_mapping(index.es_custom_map,
+                                         index.index_definition)
         self.load_data()
         self.wait_for_indexing_complete()
         if self._update or self._delete:
@@ -1546,168 +1561,80 @@ class StableTopFTS(FTSBaseTest):
             self.log.error(err)
             self.fail("Testcase failed: " + err.message)
 
-    def test_create_geo_index(self):
+    def test_geo_query(self):
         """
-        Indexes geo spatial data
-        Normally when we have a nested object, we first "insert child mapping"
-        and then refer to the fields inside it. But, for geopoint, the
-        structure "geo" is the data being indexed. Refer: CBQE-4030
-        :return: the index object
+        Tests both geo location and bounding box queries
+        compares results against ES
+        :return: Nothing
         """
-        self.log.info("Loading travel sample ...")
-        self.load_sample_buckets(self._master, bucketName="travel-sample")
-        self.log.info("Creating geo-index ...")
-        from fts_base import FTSIndex
-        geo_index = FTSIndex(
-            cluster= self._cb_cluster,
-            name = "geo-index",
-            source_name="travel-sample",
-            )
-        geo_index.index_definition["params"] = {
-          "doc_config": {
-           "mode": "type_field",
-           "type_field": "type"
-          },
-          "mapping": {
-           "default_analyzer": "standard",
-           "default_datetime_parser": "dateTimeOptional",
-           "default_field": "_all",
-           "default_mapping": {
-            "dynamic": True,
-            "enabled": False,
-            "properties": {
-             "geo": {
-              "dynamic": False,
-              "enabled": True
-             }
-            }
-           },
-           "default_type": "_default",
-           "index_dynamic": True,
-           "store_dynamic": False,
-           "type_field": "type",
-           "types": {
-            "airport": {
-             "dynamic": False,
-             "enabled": True,
-             "properties": {
-              "geo": {
-               "enabled": True,
-               "dynamic": False,
-               "fields": [
+        geo_index = self.create_geo_index_and_load()
+        self.generate_random_geo_queries(geo_index, self.num_queries)
+        self.run_query_and_compare(geo_index)
+
+
+    def test_sort_geo_query(self):
+        """
+        Generate random geo location queries and compare the results against
+        Elasticsearch
+        :return: Nothing
+        """
+        geo_index = self.create_geo_index_and_load()
+        from random_query_generator.rand_query_gen import FTSESQueryGenerator
+
+        for i in range(self.num_queries):
+            fts_query, es_query = FTSESQueryGenerator.construct_geo_location_query()
+            print fts_query
+            if "lon" in fts_query["location"]:
+                lon = fts_query["location"]["lon"]
+                lat = fts_query["location"]["lat"]
+            else:
+                lon = fts_query["location"][0]
+                lat = fts_query["location"][1]
+            unit = fts_query["distance"][-2:]
+            sort_fields = [
                 {
-                 "analyzer": "",
-                 "include_in_all": True,
-                 "include_term_vectors": True,
-                 "index": True,
-                 "name": "geo",
-                 "store": True,
-                 "type": "geopoint"
+                    "by": "geo_distance",
+                    "field": "geo",
+                    "unit": unit,
+                    "location": {
+                        "lon": lon,
+                        "lat": lat
+                    }
                 }
-               ]
-              }
-             }
-            }
-           }
-          }
-        }
-        geo_index.create()
-        self.is_index_partitioned_balanced(geo_index)
-        self.wait_for_indexing_complete()
-        return geo_index
+            ]
 
-    def test_geo_location_query(self):
-        """
-        Find all documents with an indexed geo point, which is located within
-        the specified distance of the specified point.
-        The user must provide a single data point and a distance
-        :return: Nothing
-        """
-        lon = float(TestInputSingleton.input.param("lon", 1.954764))
-        lat = float(TestInputSingleton.input.param("lat", 50.962097))
-        distance = TestInputSingleton.input.param("distance", "10mi")
-        expected_hits = TestInputSingleton.input.param("expected_hits", None)
-        dist_unit = TestInputSingleton.input.param("unit", "mi")
+            hits, doc_ids, _, _ = geo_index.execute_query(
+                query=fts_query,
+                sort_fields=sort_fields)
 
-        geo_index = self.test_create_geo_index()
+            self.log.info("Hits from FTS: {0}".format(hits))
+            self.log.info("First 50 docIDs: {0}". format(doc_ids[:50]))
 
-        query = {
-            "location": {
-                "lon": lon,
-                "lat": lat
-            },
-            "distance": distance,
-            "field": "geo"
-        }
-
-        sort_fields = [
-            {
-              "by": "geo_distance",
-              "field": "geo",
-              "unit": dist_unit,
-              "location": {
-                "lon": lon,
-                "lat": lat
-              }
-            }
-        ]
-
-        hits, doc_ids, _, _ = geo_index.execute_query(query=query,
-                                            sort_fields=sort_fields,
-                                            zero_results_ok=False,
-                                            expected_hits= expected_hits)
-        self.log.info("Hits: {0}".format(hits))
-        self.log.info("Doc_ids: {0}".format(doc_ids))
-
-    def test_geo_bounding_box_query(self):
-        """
-        Find all documents with an indexed geo point, which is located within
-        the specified bounding box. Sort by the geo_distance
-        The user provides two data points,
-        the upper left and bottom right point of the bounding box.
-        :return: Nothing
-        """
-
-        lon1 = float(TestInputSingleton.input.param("lon1", 1.954764))
-        lat1 = float(TestInputSingleton.input.param("lat1", 50.962097))
-        lon2 = float(TestInputSingleton.input.param("lon2", 2.387075))
-        lat2 = float(TestInputSingleton.input.param("lat2", 49.873019))
-
-        expected_hits = TestInputSingleton.input.param("expected_hits", None)
-        dist_unit = TestInputSingleton.input.param("unit", "mi")
-
-        geo_index = self.test_create_geo_index()
-
-        query = {
-            "top_left": {
-                "lon": lon1,
-                "lat": lat1
-            },
-            "bottom_right": {
-                "lon": lon2,
-                "lat": lat2
-            },
-            "field": "geo"
-        }
-
-        sort_fields = [
-            {
-                "by": "geo_distance",
-                "field": "geo",
-                "unit": dist_unit,
-                "location": {
-                    "lon": lon1,
-                    "lat": lat1
+            sort_fields_es = [
+                {
+                    "_geo_distance": {
+                        "geo": [lon, lat],
+                        "order": "asc",
+                        "unit": unit
+                    }
                 }
-            }
-        ]
+            ]
+            es_query["sort"] = sort_fields_es
 
-        hits, doc_ids, _, _ = geo_index.execute_query(query=query,
-                                                sort_fields=sort_fields,
-                                                zero_results_ok=False,
-                                                expected_hits=expected_hits)
-        self.log.info("Hits: {0}".format(hits))
-        self.log.info("Doc_ids: {0}".format(doc_ids))
+            hits2, doc_ids2, _ = self.es.search(index_name="es_index",
+                           query=es_query)
+
+            self.log.info("Hits from ES: {0}".format(hits2))
+            self.log.info("First 50 doc_ids: {0}".format(doc_ids2[:50]))
+
+            if doc_ids==doc_ids2:
+                self.log.info("PASS: Sort order matches!")
+            else:
+                msg = "FAIL: Sort order mismatch!"
+                self.log.error(msg)
+                self.fail(msg)
+            self.log.info("--------------------------------------------------"
+                          "--------------------------------------------------")
 
     def test_xattr_support(self):
         """
@@ -1719,9 +1646,7 @@ class StableTopFTS(FTSBaseTest):
         index = self._cb_cluster.create_fts_index(
             name='default_index',
             source_name='default',
-            source_params={"authUser": 'default',
-                           "authPassword": '',
-                           "includeXAttrs": True})
+            source_params={"includeXAttrs": True})
         self.is_index_partitioned_balanced(index)
         self.wait_for_indexing_complete()
         if self._update or self._delete:
@@ -1738,11 +1663,10 @@ class StableTopFTS(FTSBaseTest):
         :return: Nothing
         """
         fts_ssl_port=18094
-        import json, os, subprocess
+        import json, subprocess
         idx = {"sourceName": "default",
                "sourceType": "couchbase",
-               "type": "fulltext-index",
-               "sourceParams": {"authUser": "default"}}
+               "type": "fulltext-index"}
 
         qry = {"indexName": "default_index_1",
                  "query": {"field": "type", "match": "emp"},
@@ -1754,7 +1678,7 @@ class StableTopFTS(FTSBaseTest):
         f.write(cert)
         f.close()
 
-        cmd = "curl -k -E cert.pem "+\
+        cmd = "curl -g -k -E cert.pem "+\
               "-XPUT -H \"Content-Type: application/json\" "+\
               "-u Administrator:password "+\
               "https://{0}:{1}/api/index/default_idx -d ".\
@@ -1764,7 +1688,7 @@ class StableTopFTS(FTSBaseTest):
         self.log.info("Running command : {0}".format(cmd))
         output = subprocess.check_output(cmd, shell=True)
         if json.loads(output) == {"status":"ok"}:
-            query = "curl -k -E cert.pem " + \
+            query = "curl -g -k -E cert.pem " + \
                     "-XPOST -H \"Content-Type: application/json\" " + \
                     "-u Administrator:password " + \
                     "https://{0}:18094/api/index/default_idx/query -d ". \
@@ -1777,3 +1701,33 @@ class StableTopFTS(FTSBaseTest):
                 self.fail("Query over ssl failed!")
         else:
             self.fail("Index could not be created over ssl")
+
+
+    def test_json_types(self):
+        import couchbase
+        self.load_data()
+        self.create_simple_default_index()
+        master = self._cb_cluster.get_master_node()
+        dic ={}
+        dic['null'] = None
+        dic['number'] = 12345
+        dic['date'] = "2018-01-21T18:25:43-05:00"
+        dic['bool'] = True
+        dic['string'] = "sample string json"
+        dic['array'] = ['element1', 1234, True]
+        try:
+            from couchbase.cluster import Cluster
+            from couchbase.cluster import PasswordAuthenticator
+            cluster = Cluster('couchbase://{0}'.format(master.ip))
+            authenticator = PasswordAuthenticator('Administrator', 'password')
+            cluster.authenticate(authenticator)
+            cb = cluster.open_bucket('default')
+            for key, value in dic.iteritems():
+                cb.upsert(key, value)
+        except Exception as e:
+            self.fail(e)
+        self.wait_for_indexing_complete()
+        self.validate_index_count(equal_bucket_doc_count=True)
+        for index in self._cb_cluster.get_indexes():
+            self.generate_random_queries(index, 5, self.query_types)
+            self.run_query_and_compare(index)

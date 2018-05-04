@@ -21,7 +21,9 @@ class CBASCompilationParamsTests(CBASBaseTest):
         self.validate_item_count = True
         self.statement = "select sleep(count(*),500) from {0} where mutated=0;".format(
             self.cbas_dataset_name)
-
+        if "add_all_cbas_nodes" in self.input.test_params and self.input.test_params["add_all_cbas_nodes"] and len(self.cbas_servers) > 1:
+            self.add_all_cbas_node_then_rebalance()
+            
     def tearDown(self):
         super(CBASCompilationParamsTests, self).tearDown()
 
@@ -75,7 +77,7 @@ class CBASCompilationParamsTests(CBASBaseTest):
 
         try:
             status, metrics, errors, results, handle = self.execute_statement_on_cbas_via_rest(
-                self.statement, mode=self.mode, rest=self.rest, timeout=3600)
+                self.statement, mode=self.mode, timeout=3600)
             self.log.info("Status = %s", status)
             if not self.expect_failure and status != "success":
                 self.fail("Unexpected failure")
@@ -104,7 +106,7 @@ class CBASCompilationParamsTests(CBASBaseTest):
 
         try:
             status, metrics, errors, results, handle = self.execute_statement_on_cbas_via_rest(
-                self.statement, mode=self.mode, rest=self.rest, timeout=3600)
+                self.statement, mode=self.mode, timeout=3600)
             self.log.info("Status = %s", status)
             if not self.expect_failure and status != "success":
                 self.fail("Unexpected failure")

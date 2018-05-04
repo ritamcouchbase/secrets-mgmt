@@ -8,8 +8,10 @@ import os
 from subprocess import Popen, PIPE
 from remote.remote_util import RemoteMachineShellConnection
 from tuq import QueryTests
+import re
 
 log = logger.Logger.get_logger()
+
 
 class AdvancedQueryTests(QueryTests):
     def setUp(self):
@@ -17,30 +19,113 @@ class AdvancedQueryTests(QueryTests):
         self.use_rest = False
         self.cbqpath = '%scbq -quiet -u %s -p %s' % (self.path, self.username, self.password)
 
-
     def tearDown(self):
         if self._testMethodName == 'suite_tearDown':
             self.skip_buckets_handle = False
         super(AdvancedQueryTests, self).tearDown()
 
-
     def test_url(self):
+        '''
+        Description: This test will ensure that the commandline cbq command can and will connect to the valid URLs
+        and will through an error if the URL is invalid.
+
+        Steps:
+        1. Create list of URLs that should work and a list of URLs the should not work
+        2. Send cbq command to remote shell on each server. The command will use a URL with the -e parameter
+
+        Author: Korrigan Clark
+        Date Modified: 26/07/2017
+        '''
+        ###
+        prefixes = ['http://', 'https://', 'couchbase://', 'couchbases://']
+        ips = ['localhost', '127.0.0.1'] + [str(server.ip) for server in self.servers]
+        ports = [':8091', ':8093', ':18091', ':18093']
+
+        pass_urls = []
+
+        # creates url, port tuples that should be valid.
+        # port will be used to verify it connected to the proper endpoint
+        for prefix in prefixes:
+            for ip in ips:
+                pass_urls.append((ip, '8091'))
+                if prefix == 'couchbase://':
+                    pass_urls.append((prefix+ip, '8091'))
+                if prefix == 'couchbases://':
+                    pass_urls.append((prefix+ip, '18091'))
+                for port in ports:
+                    if prefix == 'http://' and port in ['8091', '8093']:
+                        pass_urls.append((prefix+ip+port, port))
+                    if prefix == 'https://' and port in ['18091', '18093']:
+                        pass_urls.append((prefix+ip+port, port))
+
+        fail_urls = []
+
+        # creates urls that should not work, either wrong prefix/prot combo or invalid url
+        for prefix in prefixes:
+            for ip in ips:
+                for port in ports:
+                    if prefix == 'http://' and port in ['18091', '18093']:
+                        fail_urls.append(prefix+ip+port)
+                        fail_urls.append(prefix+ip+port+'!')
+                        fail_urls.append(prefix+ip+'!'+port)
+                    if prefix == 'https://' and port in ['8091', '8093']:
+                        fail_urls.append(prefix+ip+port)
+                        fail_urls.append(prefix+ip+port+'!')
+                        fail_urls.append(prefix+ip+'!'+port)
+                    if prefix == 'couchbase://':
+                        fail_urls.append(prefix+ip+port)
+                    if prefix == 'couchbases://':
+                        fail_urls.append(prefix+ip+port)
+
+        # run through all servers and try to connect cbq to the given url
         for server in self.servers:
-            shell = RemoteMachineShellConnection(server)
             for bucket in self.buckets:
+                shell = RemoteMachineShellConnection(server)
                 try:
-                    o = shell.execute_commands_inside('%s/cbq  -u=Administrator -p=password http://localhost:8091@' % (self.path),'','','','','','')
-                    self.assertTrue('status:FAIL' in o)
-                    o = shell.execute_commands_inside('%s/cbq  -u=Administrator -p=password http://localhost:8091:' % (self.path),'','','','','','')
-                    self.assertTrue('status:FAIL' in o)
-                    o = shell.execute_commands_inside('%s/cbq  -u=Administrator -p=password http://localhost:8091[' % (self.path),'','','','','','')
-                    self.assertTrue('status:FAIL' in o)
-                    o = shell.execute_commands_inside('%s/cbq  -u=Administrator -p=password http://localhost:8091]' % (self.path),'','','','','','')
-                    self.assertTrue('status:FAIL' in o)
-                    o = shell.execute_commands_inside('%s/cbq  -u=Administrator -p=password http://localhost:8091:' % (self.path),'','','','','','')
-                    self.assertTrue('status:FAIL' in o)
+                    for url in pass_urls:
+                        cmd = self.path+'cbq  -u=Administrator -p=password -e='+url[0]+' -no-ssl-verify=true'
+                        o = shell.execute_commands_inside(cmd, '', ['select * from system:nodes;', '\quit;'], '', '', '', '')
+                        self.assertTrue(url[1] in o)
+
+                    for url in fail_urls:
+                        cmd = self.path+'cbq  -u=Administrator -p=password -e='+url+' -no-ssl-verify=true'
+                        o = shell.execute_commands_inside(cmd, '', ['select * from system:nodes;', '\quit;'], '', '', '', '')
+                        self.assertTrue('status:FAIL' in o)
                 finally:
                     shell.disconnect()
+
+    def test_ipv6(self):
+        prefixes = ['http://', 'https://', 'couchbase://', 'couchbases://']
+        ips = ['[::1]']
+        ports = [':8091', ':8093', ':18091', ':18093']
+
+        pass_urls = []
+
+        # creates url, port tuples that should be valid.
+        # port will be used to verify it connected to the proper endpoint
+        for prefix in prefixes:
+            for ip in ips:
+                pass_urls.append((ip, '8091'))
+                if prefix == 'couchbase://':
+                    pass_urls.append((prefix+ip, '8091'))
+                if prefix == 'couchbases://':
+                    pass_urls.append((prefix+ip, '18091'))
+                for port in ports:
+                    if prefix == 'http://' and port in ['8091', '8093']:
+                        pass_urls.append((prefix+ip+port, port))
+                    if prefix == 'https://' and port in ['18091', '18093']:
+                        pass_urls.append((prefix+ip+port, port))
+
+        # run through all servers and try to connect cbq to the given url
+        for server in self.servers:
+            shell = RemoteMachineShellConnection(server)
+            try:
+                for url in pass_urls:
+                    cmd = self.path+'cbq  -u=Administrator -p=password -e='+url[0]+' -no-ssl-verify=true'
+                    o = shell.execute_commands_inside(cmd, '', ['select * from system:nodes;', '\quit;'], '', '', '', '')
+                    self.assertTrue(url[1] in o)
+            finally:
+                shell.disconnect()
 
     def test_engine_postive(self):
         for server in self.servers:
@@ -50,8 +135,7 @@ class AdvancedQueryTests(QueryTests):
                     o = self.execute_commands_inside(self.cbqpath,'\quit','','','','','','')
                     if self.analytics:
                         self.query = '\quit'
-                        o = self.run_cbq_query()
-                        print o
+                        self.run_cbq_query()
                     self.assertTrue(o is '')
                 finally:
                     shell.disconnect()
@@ -65,8 +149,7 @@ class AdvancedQueryTests(QueryTests):
                     o = self.execute_commands_inside(self.cbqpath,'\quit1','','','','','')
                     if self.analytics:
                         self.query = '\quit1'
-                        o = self.run_cbq_query()
-                        print o
+                        self.run_cbq_query()
                     self.assertTrue("Command does not exist" in o)
                 finally:
                     shell.disconnect()
@@ -81,8 +164,7 @@ class AdvancedQueryTests(QueryTests):
                     o = self.execute_commands_inside('%s/cbq -q -ne' % (self.path),'\SET','','','','','')
                     if self.analytics:
                         self.query = '\SET'
-                        o = self.run_cbq_query()
-                        print o
+                        self.run_cbq_query()
                     self.assertTrue("histfileValue" in o)
                 finally:
                     shell.disconnect()
@@ -101,8 +183,7 @@ class AdvancedQueryTests(QueryTests):
                     self.query = '\set -timeout "10ms"'
                     self.run_cbq_query()
                     self.query = 'select * from default'
-                    o = self.run_cbq_query()
-                    print o
+                    self.run_cbq_query()
                 self.assertTrue("timeout" in o)
             finally:
                 shell.disconnect()
@@ -115,7 +196,7 @@ class AdvancedQueryTests(QueryTests):
             for bucket in self.buckets:
                 try:
                     if (bucket.saslPassword != ''):
-                        print('sasl')
+                        #sasl
                         o = shell.execute_commands_inside('%s/cbq -c %s:%s -q' % (self.path,bucket.name,bucket.saslPassword),'CREATE PRIMARY INDEX ON %s USING GSI' %bucket.name,'','','','','')
                         self.assertTrue("requestID" in o)
                         o = shell.execute_commands_inside('%s/cbq -c %s:%s -q' % (self.path,bucket.name,bucket.saslPassword),'select *,join_day from %s limit 10'%bucket.name,'','','','','')
@@ -124,7 +205,6 @@ class AdvancedQueryTests(QueryTests):
                             o = self.run_cbq_query()
                         self.assertTrue("requestID" in o)
                         o = shell.execute_commands_inside('%s/cbq -c %s:%s -q' % (self.path,bucket.name,'wrong'),'select * from %s limit 10'%bucket.name,'','','','','')
-                        print o
                         self.assertTrue("AuthorizationFailed"  in o)
 
                         o = shell.execute_commands_inside('%s/cbq -c %s:%s -q' % (self.path,'','wrong'),'select * from %s limit 10'%bucket.name,'','','','','')
@@ -166,7 +246,7 @@ class AdvancedQueryTests(QueryTests):
                         self.assertTrue("requestID" in o)
                         o = shell.execute_commands_inside('%s/cbq -q -u=%s -p=%s' % (self.path,bucket.name,bucket.saslPassword),'select * from %s limit 10;' %bucket.name,'','','','','' )
                         self.assertTrue("requestID" in o)
-                        print('nonsasl')
+                        #nonsasl
                         o = shell.execute_commands_inside('%s/cbq -q -u %s -p %s' % (self.path,'Administrator','password'),'select * from default limit 10;','','','','','' )
                         self.assertTrue("requestID" in o)
                         o = shell.execute_commands_inside('%s/cbq -q -u %s -p %s' % (self.path,bucket.name,bucket.saslPassword),'select * from default limit 10;' ,'','','','','' )
@@ -230,9 +310,18 @@ class AdvancedQueryTests(QueryTests):
         for server in self.servers:
             shell = RemoteMachineShellConnection(server)
             o = self.execute_commands_inside('%s/cbq --version' % (self.path),'','','','','','' )
-            print o
             o = self.execute_commands_inside('%s/cbq -s="\HELP VERSION"' % (self.path),'','','','','','' )
             print o
+
+    def test_exit_on_error(self):
+        for bucket in self.buckets:
+            try:
+                o = self.shell.execute_command('%s/cbq  -q -u %s -p %s -exit-on-error -s="\set 1" '
+                                         '-s="select * from default limit 1"'
+                                         % (self.path, self.username, self.password))
+                self.assertTrue("Exitingonfirsterrorencountered")
+            finally:
+                self.shell.disconnect()
 
     def test_pretty_false(self):
         shell = RemoteMachineShellConnection(self.master)
@@ -362,7 +451,7 @@ class AdvancedQueryTests(QueryTests):
         for server in self.servers:
             shell = RemoteMachineShellConnection(server)
             for bucket in self.buckets:
-                queries = ['\SET -$join_day 2;','\SET -$project "AB";','prepare temp from select name, tasks_ids,join_day from bucketname where join_day>=$join_day and tasks_ids[0] IN (select ARRAY_AGG(DISTINCT task_name) as names from bucketname d use keys ["test_task-1", "test_task-2"] where project!=$project)[0].names;','execute temp;']
+                queries = ['\SET -$join_day 2;','\SET -$project "AB";','prepare temp from select name, tasks_ids,join_day from bucketname where join_day>=$join_day and tasks_ids[0] IN (select ARRAY_AGG(DISTINCT task_name) as names from bucketname d use keys ["test_task-1", "test_task-2"] where project!=$project)[0].names;','execute temp;','\quit;']
                 o = self.execute_commands_inside(self.cbqpath,'',queries,'','',bucket.name,'' )
                 # Test needs to be finished
 
@@ -438,103 +527,3 @@ class AdvancedQueryTests(QueryTests):
                 queries = ['drop primary index on bucketname;']
                 o = shell.execute_commands_inside('%s/cbq -quiet' % (self.path),'',queries,'','',bucket.name,True )
                 print o
-
-
-    def execute_commands_inside(self, main_command, query, queries, bucket1, password, bucket2, source,
-                                subcommands=[], min_output_size=0,
-                                end_msg='', timeout=250):
-        shell = RemoteMachineShellConnection(self.master)
-        shell.extract_remote_info()
-        filename = "/tmp/test2"
-        iswin = False
-
-        if shell.info.type.lower() == 'windows':
-            iswin = True
-            filename = "/cygdrive/c/tmp/test.txt"
-
-        filedata = ""
-        if not (query == ""):
-            main_command = main_command + " -s=\"" + query + '"'
-        elif (shell.remote and not (queries == "")):
-            sftp = shell._ssh_client.open_sftp()
-            filein = sftp.open(filename, 'w')
-            for query in queries:
-                filein.write(query)
-                filein.write('\n')
-            fileout = sftp.open(filename, 'r')
-            filedata = fileout.read()
-            fileout.close()
-        elif not (queries == ""):
-            f = open(filename, 'w')
-            for query in queries:
-                f.write(query)
-                f.write('\n')
-            f.close()
-            fileout = open(filename, 'r')
-            filedata = fileout.read()
-            fileout.close()
-
-        newdata = filedata.replace("bucketname", bucket2)
-        newdata = newdata.replace("user", bucket1)
-        newdata = newdata.replace("pass", password)
-        newdata = newdata.replace("bucket1", bucket1)
-
-        newdata = newdata.replace("user1", bucket1)
-        newdata = newdata.replace("pass1", password)
-        newdata = newdata.replace("bucket2", bucket2)
-        newdata = newdata.replace("user2", bucket2)
-        newdata = newdata.replace("pass2", password)
-
-        if (shell.remote and not (queries == "")):
-            f = sftp.open(filename, 'w')
-            f.write(newdata)
-            f.close()
-        elif not (queries == ""):
-            f = open(filename, 'w')
-            f.write(newdata)
-            f.close()
-        if not (queries == ""):
-            if (source):
-                if iswin:
-                    main_command = main_command + "  -s=\"\SOURCE " + 'c:\\\\tmp\\\\test.txt'
-                else:
-                    main_command = main_command + "  -s=\"\SOURCE " + filename + '"'
-            else:
-                if iswin:
-                    main_command = main_command + " -f=" + 'c:\\\\tmp\\\\test.txt'
-                else:
-                    main_command = main_command + " -f=" + filename
-
-        log.info("running command on {0}: {1}".format(self.master.ip, main_command))
-        output = ""
-        if shell.remote:
-            stdin, stdout, stderro = shell._ssh_client.exec_command(main_command)
-            time.sleep(20)
-            count = 0
-            for line in stdout.readlines():
-                if (count >= 0):
-                    output += line.strip()
-                    output = output.strip()
-                    if "Inputwasnotastatement" in output:
-                        output = "status:FAIL"
-                        break
-                    if "timeout" in output:
-                        output = "status:timeout"
-                else:
-                    count += 1
-            stdin.close()
-            stdout.close()
-            stderro.close()
-        else:
-            p = Popen(main_command, shell=True, stdout=PIPE, stderr=PIPE)
-            stdout, stderro = p.communicate()
-            output = stdout
-            print output
-            time.sleep(1)
-        if (shell.remote and not (queries == "")):
-            sftp.remove(filename)
-            sftp.close()
-        elif not (queries == ""):
-            os.remove(filename)
-
-        return (output)

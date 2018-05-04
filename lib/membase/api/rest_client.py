@@ -11,7 +11,7 @@ import uuid
 from copy import deepcopy
 from threading import Thread
 from TestInput import TestInputSingleton
-from testconstants import MIN_KV_QUOTA, INDEX_QUOTA, FTS_QUOTA
+from testconstants import MIN_KV_QUOTA, INDEX_QUOTA, FTS_QUOTA, CBAS_QUOTA
 from testconstants import COUCHBASE_FROM_VERSION_4, IS_CONTAINER
 
 
@@ -51,7 +51,7 @@ class RestHelper(object):
             except ServerUnavailableException:
                 log.error("server {0}:{1} is unavailable"\
                                            .format(self.rest.ip, self.rest.port))
-            time.sleep(2)
+            time.sleep(5)
         msg = 'unable to connect to the node {0} even after waiting {1} seconds'
         log.error(msg.format(self.rest.ip, timeout_in_seconds))
         return False
@@ -253,13 +253,18 @@ class RestConnection(object):
             self.port = serverInfo["port"]
             self.index_port = 9102
             self.fts_port = 8094
-            self.query_port=8093
+            self.query_port = 8093
+            self.eventing_port = 8096
             if "index_port" in serverInfo.keys():
                 self.index_port = serverInfo["index_port"]
             if "fts_port" in serverInfo.keys():
                 if serverInfo['fts_port']:
                     self.fts_port = serverInfo["fts_port"]
+            if "eventing_port" in serverInfo.keys():
+                if serverInfo['eventing_port']:
+                    self.eventing_port = serverInfo["eventing_port"]
             self.hostname = ''
+            self.services = ''
             if "hostname" in serverInfo:
                 self.hostname = serverInfo["hostname"]
             if "services" in serverInfo:
@@ -273,7 +278,9 @@ class RestConnection(object):
             self.index_port = 9102
             self.fts_port = 8094
             self.query_port = 8093
+            self.eventing_port = 8096
             self.services = "kv"
+            self.debug_logs = False
             if hasattr(serverInfo, "services"):
                 self.services = serverInfo.services
             if hasattr(serverInfo, 'index_port'):
@@ -283,6 +290,9 @@ class RestConnection(object):
             if hasattr(serverInfo, 'fts_port'):
                 if serverInfo.fts_port:
                     self.fts_port = serverInfo.fts_port
+            if hasattr(serverInfo, 'eventing_port'):
+                if serverInfo.eventing_port:
+                    self.eventing_port = serverInfo.eventing_port
             if hasattr(serverInfo, 'hostname') and serverInfo.hostname and\
                serverInfo.hostname.find(self.ip) == -1:
                 self.hostname = serverInfo.hostname
@@ -293,15 +303,18 @@ class RestConnection(object):
             """ from watson, services param order and format:
                 new_services=fts-kv-index-n1ql """
             self.services_node_init = self.input.param("new_services", None)
+            self.debug_logs = self.input.param("debug-logs", False)
         self.baseUrl = "http://{0}:{1}/".format(self.ip, self.port)
         self.fts_baseUrl = "http://{0}:{1}/".format(self.ip, self.fts_port)
         self.index_baseUrl = "http://{0}:{1}/".format(self.ip, self.index_port)
         self.query_baseUrl = "http://{0}:{1}/".format(self.ip, self.query_port)
         self.capiBaseUrl = "http://{0}:{1}/".format(self.ip, 8092)
+        self.eventing_baseUrl = "http://{0}:{1}/".format(self.ip, self.eventing_port)
         if self.hostname:
             self.baseUrl = "http://{0}:{1}/".format(self.hostname, self.port)
             self.capiBaseUrl = "http://{0}:{1}/".format(self.hostname, 8092)
             self.query_baseUrl = "http://{0}:{1}/".format(self.hostname, 8093)
+            self.eventing_baseUrl = "http://{0}:{1}/".format(self.hostname, self.eventing_port)
 
         # Initialization of CBAS related params
         self.cbas_base_url = ""
@@ -314,6 +327,8 @@ class RestConnection(object):
                 self.cbas_base_url = "http://{0}:{1}".format(
                     self.cbas_node.ip,
                     self.cbas_port)
+            elif "cbas" in self.services:
+                self.cbas_base_url = "http://{0}:{1}".format(self.ip, 8095)
 
         # for Node is unknown to this cluster error
         for iteration in xrange(5):
@@ -359,8 +374,9 @@ class RestConnection(object):
             log.warn('Exception while streaming: %s' % str(ex))
 
     def open_sasl_streaming_connection(self, bucket, timeout=1000):
-        log.info("Opening sasl streaming connection for bucket %s" %
-                 (bucket, bucket.name)[isinstance(bucket, Bucket)])
+        if self.debug_logs:
+            log.info("Opening sasl streaming connection for bucket {0}"\
+                 .format((bucket, bucket.name)[isinstance(bucket, Bucket)]))
         t = Thread(target=self.sasl_streaming_rq,
                           name="streaming_" + str(uuid.uuid4())[:4],
                           args=(bucket, timeout))
@@ -734,6 +750,13 @@ class RestConnection(object):
                 'Authorization': 'Basic %s' % authorization,
                 'Accept': '*/*'}
 
+    def _create_capi_headers_with_auth(self, username, password):
+        authorization = base64.encodestring(
+            '%s:%s' % (username, password))
+        return {'Content-Type': 'application/json',
+                'Authorization': 'Basic %s' % authorization,
+                'Accept': '*/*'}
+
     def _create_headers_with_auth(self, username, password):
         authorization = base64.encodestring('%s:%s' % (username, password))
         return {'Authorization': 'Basic %s' % authorization}
@@ -763,9 +786,13 @@ class RestConnection(object):
         if not headers:
             headers = self._create_headers()
         end_time = time.time() + timeout
+        log.debug("Executing {0} request for following api {1} with Params: {2}  and Headers: {3}"\
+                                                                .format(method,api,params,headers))
+        count = 1
         while True:
             try:
-                response, content = httplib2.Http(timeout=timeout).request(api, method, params, headers)
+                response, content = httplib2.Http(timeout=timeout).request(api, method,
+                                                                           params, headers)
                 if response['status'] in ['200', '201', '202']:
                     return True, content, response
                 else:
@@ -773,7 +800,8 @@ class RestConnection(object):
                         json_parsed = json.loads(content)
                     except ValueError as e:
                         json_parsed = {}
-                        json_parsed["error"] = "status: {0}, content: {1}".format(response['status'], content)
+                        json_parsed["error"] = "status: {0}, content: {1}"\
+                                                           .format(response['status'], content)
                     reason = "unknown"
                     if "error" in json_parsed:
                         reason = json_parsed["error"]
@@ -784,14 +812,20 @@ class RestConnection(object):
                     log.debug(''.join(traceback.format_stack()))
                     return False, content, response
             except socket.error as e:
-                log.error("socket error while connecting to {0} error {1} ".format(api, e))
+                if count < 4:
+                    log.error("socket error while connecting to {0} error {1} ".format(api, e))
                 if time.time() > end_time:
+                    log.error("Tried ta connect {0} times".format(count))
                     raise ServerUnavailableException(ip=self.ip)
             except httplib2.ServerNotFoundError as e:
-                log.error("ServerNotFoundError error while connecting to {0} error {1} ".format(api, e))
+                if count < 4:
+                    log.error("ServerNotFoundError error while connecting to {0} error {1} "\
+                                                                              .format(api, e))
                 if time.time() > end_time:
+                    log.error("Tried ta connect {0} times".format(count))
                     raise ServerUnavailableException(ip=self.ip)
             time.sleep(3)
+            count += 1
 
     def init_cluster(self, username='Administrator', password='password', port='8091'):
         api = self.baseUrl + 'settings/web'
@@ -817,33 +851,29 @@ class RestConnection(object):
             time.sleep(1)
             kv_quota = int(self.get_nodes_self().mcdMemoryReserved)
         info = self.get_nodes_self()
-
+        kv_quota = int(info.mcdMemoryReserved * 2 / 3)
 
         cb_version = info.version[:5]
         if cb_version in COUCHBASE_FROM_VERSION_4:
-            if "index" in self.node_services and "fts" not in self.node_services:
+            if "index" in self.node_services:
                 log.info("quota for index service will be %s MB" % (INDEX_QUOTA))
-                kv_quota = kv_quota - INDEX_QUOTA
-                if kv_quota < MIN_KV_QUOTA:
+                kv_quota -= INDEX_QUOTA
+                log.info("set index quota to node %s " % self.ip)
+                self.set_service_memoryQuota(service='indexMemoryQuota', memoryQuota=INDEX_QUOTA)
+            if "fts" in self.node_services:
+                log.info("quota for fts service will be %s MB" % (FTS_QUOTA))
+                kv_quota -= FTS_QUOTA
+                log.info("set both index and fts quota at node %s "% self.ip)
+                self.set_service_memoryQuota(service='ftsMemoryQuota', memoryQuota=FTS_QUOTA)
+            if "cbas" in self.node_services:
+                log.info("quota for cbas service will be %s MB" % (CBAS_QUOTA))
+                kv_quota -= CBAS_QUOTA
+                self.set_service_memoryQuota(service = "cbasMemoryQuota", memoryQuota=CBAS_QUOTA)
+            kv_quota -= 1
+            if kv_quota < MIN_KV_QUOTA:
                     raise Exception("KV RAM needs to be more than %s MB"
                             " at node  %s"  % (MIN_KV_QUOTA, self.ip))
-                elif "index" in self.node_services and "fts" in self.node_services:
-                    log.info("quota for index service will be %s MB" \
-                                                      % (INDEX_QUOTA))
-                    log.info("quota for fts service will be %s MB" \
-                                                       % (FTS_QUOTA))
-                    kv_quota = kv_quota - INDEX_QUOTA - FTS_QUOTA
-                    if kv_quota < MIN_KV_QUOTA:
-                        raise Exception("KV RAM need to be more than %s MB"
-                                 " at node  %s"  % (MIN_KV_QUOTA, self.ip))
-                elif "fts" in self.node_services and "index" not in self.node_services:
-                    log.info("quota for fts service will be %s MB" \
-                                                      % (FTS_QUOTA))
-                    kv_quota = kv_quota - FTS_QUOTA
-                    if kv_quota < MIN_KV_QUOTA:
-                        raise Exception("KV RAM need to be more than %s MB"
-                                " at node  %s"  % (MIN_KV_QUOTA, server.ip))
-                    self.set_fts_memoryQuota(ftsMemoryQuota=FTS_QUOTA)
+
         log.info("quota for kv: %s MB" % kv_quota)
         self.init_cluster_memoryQuota(self.username, self.password, kv_quota)
         if cb_version in COUCHBASE_FROM_VERSION_4:
@@ -888,23 +918,14 @@ class RestConnection(object):
         status, content, header = self._http_request(api, 'POST', params)
         return status
 
-    def set_indexer_memoryQuota(self, username='Administrator',
+    def set_service_memoryQuota(self, service, username='Administrator',
                                  password='password',
-                                 indexMemoryQuota=256):
+                                 memoryQuota=256):
+        ''' cbasMemoryQuota for cbas service.
+            ftsMemoryQuota for fts service.
+            indexMemoryQuota for index service.'''
         api = self.baseUrl + 'pools/default'
-        params = urllib.urlencode({'indexMemoryQuota': indexMemoryQuota})
-        log.info('pools/default params : {0}'.format(params))
-        status, content, header = self._http_request(api, 'POST', params)
-        if status:
-            return status
-        else:
-            return content
-
-    def set_fts_memoryQuota(self, username='Administrator',
-                                 password='password',
-                                 ftsMemoryQuota=256):
-        api = self.baseUrl + 'pools/default'
-        params = urllib.urlencode({'ftsMemoryQuota': ftsMemoryQuota})
+        params = urllib.urlencode({service: memoryQuota})
         log.info('pools/default params : {0}'.format(params))
         status, content, header = self._http_request(api, 'POST', params)
         return status
@@ -922,6 +943,7 @@ class RestConnection(object):
                                  password='password',
                                  storageMode='plasma'):
         """
+           StorageMode could be plasma or memopt
            From spock, we replace forestdb with plasma
         """
         api = self.baseUrl + 'settings/indexes'
@@ -978,9 +1000,15 @@ class RestConnection(object):
             raise Exception("list rebalance tokens failed")
 
     def execute_statement_on_cbas(self, statement, mode, pretty=True,
-                                  timeout=70, client_context_id=None):
+                                  timeout=70, client_context_id=None,
+                                  username=None, password=None):
+        if not username:
+            username = self.username
+        if not password:
+            password = self.password
         api = self.cbas_base_url + "/analytics/service"
-        headers = {'Content-type': 'application/json'}
+        headers = self._create_capi_headers_with_auth(username, password)
+
         params = {'statement': statement, 'mode': mode, 'pretty': pretty,
                   'client_context_id': client_context_id}
         params = json.dumps(params)
@@ -1005,10 +1033,15 @@ class RestConnection(object):
                 status, content))
             raise Exception("Analytics Service API failed")
 
-    def delete_active_request_on_cbas(self, client_context_id):
+    def delete_active_request_on_cbas(self, client_context_id, username=None, password=None):
+        if not username:
+            username = self.username
+        if not password:
+            password = self.password
+
         api = self.cbas_base_url + "/analytics/admin/active_requests?client_context_id={0}".format(
             client_context_id)
-        headers = {'Content-type': 'application/json'}
+        headers = self._create_capi_headers_with_auth(username, password)
 
         status, content, header = self._http_request(api, 'DELETE',
                                                      headers=headers,
@@ -1042,14 +1075,27 @@ class RestConnection(object):
             log.error("controller/regenerateCertificate status:{0},content:{1}".format(status, content))
             raise Exception("regenerateCertificate API failed")
 
-    def __remote_clusters(self, api, op, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate=''):
+    def __remote_clusters(self, api, op, remoteIp, remotePort, username, password, name, demandEncryption=0,
+                          certificate='', encryptionType="half"):
         param_map = {'hostname': "{0}:{1}".format(remoteIp, remotePort),
                         'username': username,
                         'password': password,
                         'name':name}
+        from TestInput import TestInputServer
+        remote = TestInputServer()
+        remote.ip = remoteIp
+        remote.rest_username = username
+        remote.rest_password = password
+        remote.port = remotePort
         if demandEncryption:
             param_map ['demandEncryption'] = 'on'
-            param_map['certificate'] = certificate
+            if certificate != '':
+                param_map['certificate'] = certificate
+            if self.check_node_versions("5.5") and RestConnection(remote).check_node_versions("5.5"):
+                # 5.5.0 and above
+                param_map['secureType'] = encryptionType
+            elif self.check_node_versions("5.0") and RestConnection(remote).check_node_versions("5.0"):
+                param_map['encryptionType'] = encryptionType
         params = urllib.urlencode(param_map)
         status, content, _ = self._http_request(api, 'POST', params)
         # sample response :
@@ -1061,17 +1107,25 @@ class RestConnection(object):
             raise Exception("remoteCluster API '{0} remote cluster' failed".format(op))
         return remoteCluster
 
-    def add_remote_cluster(self, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate=''):
+    def add_remote_cluster(self, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate='',
+                           encryptionType="full"):
+        # example : password:password username:Administrator hostname:127.0.0.1:9002 name:two
+        msg = "adding remote cluster hostname:{0}:{1} with username:password {2}:{3} name:{4} to source node: {5}:{6}"
+        log.info(msg.format(remoteIp, remotePort, username, password, name, self.ip, self.port))
+        api = self.baseUrl + 'pools/default/remoteClusters'
+        return self.__remote_clusters(api, 'add', remoteIp, remotePort, username, password, name, demandEncryption, certificate, encryptionType)
+
+    def add_remote_cluster_new(self, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate=''):
         # example : password:password username:Administrator hostname:127.0.0.1:9002 name:two
         msg = "adding remote cluster hostname:{0}:{1} with username:password {2}:{3} name:{4} to source node: {5}:{6}"
         log.info(msg.format(remoteIp, remotePort, username, password, name, self.ip, self.port))
         api = self.baseUrl + 'pools/default/remoteClusters'
         return self.__remote_clusters(api, 'add', remoteIp, remotePort, username, password, name, demandEncryption, certificate)
 
-    def modify_remote_cluster(self, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate=''):
+    def modify_remote_cluster(self, remoteIp, remotePort, username, password, name, demandEncryption=0, certificate='', encryptionType="half"):
         log.info("modifying remote cluster name:{0}".format(name))
         api = self.baseUrl + 'pools/default/remoteClusters/' + urllib.quote(name)
-        return self.__remote_clusters(api, 'modify', remoteIp, remotePort, username, password, name, demandEncryption, certificate)
+        return self.__remote_clusters(api, 'modify', remoteIp, remotePort, username, password, name, demandEncryption, certificate, encryptionType)
 
     def get_remote_clusters(self):
         remote_clusters = []
@@ -1149,7 +1203,12 @@ class RestConnection(object):
     def stop_replication(self, uri):
         log.info("Deleting replication {0}".format(uri))
         api = self.baseUrl[:-1] + uri
-        self._http_request(api, 'DELETE')
+        status, content, _ = self._http_request(api, 'DELETE')
+        if status:
+            log.info("Replication deleted successfully")
+        else:
+            log.error("/controller/cancelXDCR failed: status:{0}, content:{1}".format(status, content))
+            raise Exception("delete replication failed : status:{0}, content:{1}".format(status, content))
 
     def remove_all_recoveries(self):
         recoveries = []
@@ -1484,7 +1543,7 @@ class RestConnection(object):
                 sleep = 10
             else:
                 sleep = duration
-            log.info('rebalance progress took {0} seconds '.format(duration))
+            log.info('rebalance progress took {:.02f} seconds '.format(duration))
             log.info("sleep for {0} seconds after rebalance...".format(sleep))
             time.sleep(sleep)
             return True
@@ -1575,9 +1634,28 @@ class RestConnection(object):
             raise Exception(content)
         log.info("{0} set".format(setting_json))
 
+    def set_index_settings_internal(self, setting_json, timeout=120):
+        api = self.index_baseUrl + 'internal/settings'
+        status, content, header = self._http_request(api, 'POST',
+                                                     json.dumps(setting_json))
+        if not status:
+	    if header['status']=='404':
+                log.info("This endpoint is introduced only in 5.5.0, hence not found. Redirecting the request to the old endpoint")
+                self.set_index_settings(setting_json,timeout)
+            else:
+                raise Exception(content)
+        log.info("{0} set".format(setting_json))
+
     def get_index_settings(self, timeout=120):
         node = None
         api = self.index_baseUrl + 'settings'
+        status, content, header = self._http_request(api, timeout=timeout)
+        if not status:
+            raise Exception(content)
+        return json.loads(content)
+
+    def set_index_planner_settings(self, setting, timeout=120):
+        api = self.index_baseUrl + 'settings/planner?{0}'.format(setting)
         status, content, header = self._http_request(api, timeout=timeout)
         if not status:
             raise Exception(content)
@@ -1594,36 +1672,17 @@ class RestConnection(object):
     def get_index_storage_stats(self, timeout=120, index_map=None):
         api = self.index_baseUrl + 'stats/storage'
         status, content, header = self._http_request(api, timeout=timeout)
-        index_stats = dict()
-        data = content.split("\n")
-        index = "unknown"
-        store = "unknown"
-        for line in data:
-            if "Index Instance" in line:
-                index_data = re.findall(":.*", line)
-                bucket_data = re.findall(".*:", line)
-                index = index_data[0].split()[0][1:]
-                bucket = bucket_data[0].split("Index Instance")[1][:-1].strip()
-                log.info("Bucket Name: {0}".format(bucket))
-                if bucket not in index_stats.keys():
-                    index_stats[bucket] = {}
-                if index not in index_stats[bucket].keys():
-                    index_stats[bucket][index] = dict()
-                continue
-            if "Store" in line:
-                store = re.findall("[a-zA-Z]+", line)[0]
-                if store not in index_stats[bucket][index].keys():
-                    index_stats[bucket][index][store] = {}
-                continue
-            data = line.split("=")
-            if len(data) == 2:
-                metric = data[0].strip()
-                if "true" == data[1].strip().replace("%", "").lower() or \
-                                "false" == data[1].strip().replace("%", "").lower():
-                    index_stats[bucket][index][store][metric] = bool(data[1].strip().replace("%", ""))
-                else:
-                    index_stats[bucket][index][store][metric] = float(data[1].strip().replace("%", ""))
-        return index_stats
+        if not status:
+            raise Exception(content)
+        json_parsed = json.loads(content)
+        index_storage_stats = {}
+        for index_stats in json_parsed:
+            bucket = index_stats["Index"].split(":")[0]
+            index_name = index_stats["Index"].split(":")[1]
+            if not bucket in index_storage_stats.keys():
+                index_storage_stats[bucket] = {}
+            index_storage_stats[bucket][index_name] = index_stats["Stats"]
+        return index_storage_stats
 
     def get_indexer_stats(self, timeout=120, index_map=None):
         api = self.index_baseUrl + 'stats'
@@ -1855,10 +1914,17 @@ class RestConnection(object):
         zoom -- stats zoom level (minute | hour | day | week | month | year)
         """
         api = self.baseUrl + 'pools/default/buckets/{0}/stats?zoom={1}'.format(bucket, zoom)
+        log.info(api)
         status, content, header = self._http_request(api)
         return json.loads(content)
 
-
+    def set_query_index_api_mode(self, index_api_mode=3):
+        api = self.query_baseUrl + 'admin/settings'
+        query_api_setting = {"max-index-api": index_api_mode}
+        status, content, header = self._http_request(api, 'POST', json.dumps(query_api_setting))
+        if not status:
+            raise Exception(content)
+        log.info("{0} set".format(query_api_setting))
 
     def fetch_bucket_xdcr_stats(self, bucket='default', zoom='minute'):
         """Return deserialized bucket xdcr stats.
@@ -1952,6 +2018,29 @@ class RestConnection(object):
             log.info("Node versions in cluster {0}".format(versions))
         return versions
 
+    def check_cluster_compatibility(self, version):
+        """
+        Check if all nodes in cluster are of versions equal or above the version required.
+        :param version: Version to check the cluster compatibility for. Should be of format major_ver.minor_ver.
+                        For example: 5.0, 4.5, 5.1
+        :return: True if cluster is compatible with the version specified, False otherwise. Return None if cluster is
+        uninitialized.
+        """
+        nodes = self.get_nodes()
+        if not nodes:
+            # If nodes returned is None, it means that the cluster is not initialized yet and hence cluster
+            # compatibility cannot be found. Return None
+            return None
+        major_ver, minor_ver = version.split(".")
+        compatibility = int(major_ver) * 65536 + int(minor_ver)
+        is_compatible = True
+        for node in nodes:
+            clusterCompatibility = int(node.clusterCompatibility)
+            if clusterCompatibility < compatibility:
+                is_compatible = False
+        return is_compatible
+
+
     # this method returns the services of nodes in cluster - implemented for Sherlock
     def get_nodes_services(self):
         nodes = self.get_nodes()
@@ -2023,13 +2112,18 @@ class RestConnection(object):
         :return:
         """
         api = "{0}{1}".format(self.fts_baseUrl, 'api/nsstats')
-        status, content, header = self._http_request(api)
-        json_parsed = json.loads(content)
-        try:
-            return status, json_parsed[bucket_name+':'+index_name+':'+stat_name]
-        except:
-            self.log.error("ERROR: Stat {0} not found for {1} on bucket {2}".
-                           format(stat_name, index_name, bucket_name))
+        attempts = 0
+        while attempts < 5:
+            status, content, header = self._http_request(api)
+            json_parsed = json.loads(content)
+            key = bucket_name+':'+index_name+':'+stat_name
+            if key in json_parsed:
+                return status, json_parsed[key]
+            attempts += 1
+            log.info("Stat {0} not available yet".format(stat_name))
+            time.sleep(1)
+        log.error("ERROR: Stat {0} error on {1} on bucket {2}: {3}".
+                  format(stat_name, index_name, bucket_name, e))
 
     def get_bucket_status(self, bucket):
         if not bucket:
@@ -2062,6 +2156,17 @@ class RestConnection(object):
         if not status:
             raise GetBucketInfoFailed(bucket, content)
         return json.loads(content)
+
+    def get_bucket_maxTTL(self, bucket='default'):
+        bucket_info = self.get_bucket_json(bucket=bucket)
+        return bucket_info['maxTTL']
+
+    def get_bucket_compressionMode(self, bucket='default'):
+        bucket_info = self.get_bucket_json(bucket=bucket)
+        info = self.get_nodes_self()
+        if 5.5 > float(info.version[:3]):
+            bucket_info['compressionMode'] = "off"
+        return bucket_info['compressionMode']
 
     def is_lww_enabled(self, bucket='default'):
         bucket_info = self.get_bucket_json(bucket=bucket)
@@ -2126,7 +2231,9 @@ class RestConnection(object):
                       threadsNumber=3,
                       flushEnabled=1,
                       evictionPolicy='valueOnly',
-                      lww=False):
+                      lww=False,
+                      maxTTL=None,
+                      compressionMode='passive'):
 
 
         api = '{0}{1}'.format(self.baseUrl, 'pools/default/buckets')
@@ -2174,6 +2281,11 @@ class RestConnection(object):
         if lww:
             init_params['conflictResolutionType'] = 'lww'
 
+        if maxTTL:
+            init_params['maxTTL'] = maxTTL
+
+        if compressionMode and self.is_enterprise_edition():
+            init_params['compressionMode'] = compressionMode
 
         if bucketType == 'ephemeral':
             del init_params['replicaIndex']     # does not apply to ephemeral buckets, and is even rejected
@@ -2225,7 +2337,9 @@ class RestConnection(object):
                       proxyPort=None,
                       replicaIndex=None,
                       flushEnabled=None,
-                      timeSynchronization=None):
+                      timeSynchronization=None,
+                      maxTTL=None,
+                      compressionMode=None):
         api = '{0}{1}{2}'.format(self.baseUrl, 'pools/default/buckets/', bucket)
         if isinstance(bucket, Bucket):
             api = '{0}{1}{2}'.format(self.baseUrl, 'pools/default/buckets/', bucket.name)
@@ -2249,6 +2363,10 @@ class RestConnection(object):
             params_dict["flushEnabled"] = flushEnabled
         if timeSynchronization:
             params_dict["timeSynchronization"] = timeSynchronization
+        if maxTTL:
+            params_dict["maxTTL"] = maxTTL
+        if compressionMode and self.is_enterprise_edition():
+            params_dict["compressionMode"] = compressionMode
 
         params = urllib.urlencode(params_dict)
 
@@ -2560,6 +2678,18 @@ class RestConnection(object):
 
     """ Start of FTS rest apis"""
 
+    def set_fts_ram_quota(self, value):
+        """set fts ram quota"""
+        api = self.baseUrl + "pools/default"
+        params = urllib.urlencode({"ftsMemoryQuota": value})
+        status, content, _ = self._http_request(api, "POST", params)
+        if status:
+            log.info("SUCCESS: FTS RAM quota set to {0}mb".format(value))
+        else:
+            raise Exception("Error setting fts ram quota: {0}".format(content))
+        return status
+
+
     def create_fts_index(self, index_name, params):
         """create or edit fts index , returns {"status":"ok"} on success"""
         api = self.fts_baseUrl + "api/index/{0}".format(index_name)
@@ -2848,6 +2978,23 @@ class RestConnection(object):
                                   "parallelDBAndViewCompaction=false")
         return status
 
+    def set_purge_interval_and_parallel_compaction(self, interval=3, parallel="false"):
+        """
+           Cluster-wide setting.
+           Set purge interval
+           Set parallel db and view compaction
+           Return: status
+        """
+        api = self.baseUrl + "controller/setAutoCompaction"
+        log.info("Set purgeInterval to %s and parallel DB and view compaction to %s"\
+                                                              % (interval, parallel))
+        params = {}
+        params["purgeInterval"] = interval
+        params["parallelDBAndViewCompaction"] = parallel
+        params = urllib.urlencode(params)
+        status, content, header = self._http_request(api, "POST", params)
+        return status, content
+
     def set_indexer_compaction(self, mode="circular", indexDayOfWeek=None, indexFromHour=0,
                                 indexFromMinute=0, abortOutside=False,
                                 indexToHour=0, indexToMinute=0, fragmentation=30):
@@ -2927,6 +3074,16 @@ class RestConnection(object):
         if status:
             if "alerts" in json_parsed:
                 return json_parsed['alerts']
+        else:
+            return None
+
+    def get_nodes_data_from_cluster(self, param="nodes"):
+        api = self.baseUrl + "pools/default/"
+        status, content, header = self._http_request(api)
+        json_parsed = json.loads(content)
+        if status:
+            if param in json_parsed:
+                return json_parsed[param]
         else:
             return None
 
@@ -3036,7 +3193,7 @@ class RestConnection(object):
         response,content = http.request(api, "POST", headers=headers, body=json.dumps(body))
         return response,content
 
-    def get_query_admin_settings(self,server):
+    def get_query_admin_settings(self, server):
         http = httplib2.Http()
         n1ql_port = 8093
         api = "http://%s:%s/" % (server.ip, n1ql_port) + "admin/settings"
@@ -3054,7 +3211,14 @@ class RestConnection(object):
         return response, content
     '''End Monitoring/Profiling Rest Calls'''
 
-    def query_tool(self, query, port=8093, timeout=650, query_params={}, is_prepared=False, named_prepare=None,
+    def create_whitelist(self, server, whitelist):
+        http = httplib2.Http()
+        api = "http://%s:%s/" % (server.ip, server.port) + "settings/querySettings/curlWhitelist"
+        headers = self._create_headers_with_auth('Administrator', 'password')
+        response,content = http.request(api, "POST", headers=headers, body=json.dumps(whitelist))
+        return response,content
+
+    def query_tool(self, query, port=8093, timeout=1300, query_params={}, is_prepared=False, named_prepare=None,
                    verbose = True, encoded_plan=None, servers=None):
         key = 'prepared' if is_prepared else 'statement'
         headers = None
@@ -3366,6 +3530,15 @@ class RestConnection(object):
             log.error("There is not zone with name: {0} in cluster.".format(zone_name))
             return False
 
+    def get_items_info(self, keys, bucket='default'):
+        items_info = {}
+        for key in keys:
+            api = '{0}{1}{2}/docs/{3}'.format(self.baseUrl, 'pools/default/buckets/', bucket, key)
+            status, content, header = self._http_request(api)
+            if status:
+                items_info[key] = json.loads(content)
+        return items_info
+
     def start_cluster_logs_collection(self, nodes="*", upload=False, \
                                       uploadHost=None, customer="", ticket=""):
         if not upload:
@@ -3401,6 +3574,18 @@ class RestConnection(object):
         api = self.baseUrl + "controller/cancelLogsCollection"
         status, content, header = self._http_request(api, "POST")
         return status, content
+
+    def set_log_redaction_level(self, redaction_level="none"):
+        api = self.baseUrl + "settings/logRedaction"
+        params = urllib.urlencode({"logRedactionLevel":redaction_level})
+        status, content, header = self._http_request(api, "POST", params)
+        if status:
+            result = json.loads(content)
+            if result["logRedactionLevel"] == redaction_level:
+                return True
+            else:
+                return False
+        return False
 
     def get_bucket_CCCP(self, bucket):
         log.info("Getting CCCP config ")
@@ -3456,21 +3641,6 @@ class RestConnection(object):
         else:
             raise BucketCompactionException(bucket)
         return True
-
-    def _set_secrets_password(self, new_password):
-        api = self.baseUrl + "/node/controller/changeMasterPassword"
-        params = urllib.urlencode({
-            'newPassword': '{0}'.format(new_password.encode('utf-8').strip())
-                                        })
-        log.info("Params getting set is ---- {0}".format(params))
-        params = params.replace('%24', '$')
-        params = params.replace('%3D', '=')
-        log.info("Params getting set is ---- {0}".format(params))
-        status, content, header = self._http_request(api, 'POST', params)
-        log.info("Status of set password command - {0}".format(status))
-        print ("Content of the response is {0}".format(content))
-        print ("Header of the response is {0}".format(header))
-        return status
 
 
     '''LDAP Rest API '''
@@ -3670,10 +3840,24 @@ class RestConnection(object):
         else:
             return status, json.loads(content)
 
+    def set_downgrade_storage_mode_with_rest(self, downgrade=True, username="Administrator",
+                                                                   password="password"):
+        authorization = base64.encodestring('%s:%s' % (username, password))
+        if downgrade:
+            api = self.index_baseUrl + 'settings/storageMode?downgrade=true'
+        else:
+            api = self.index_baseUrl + 'settings/storageMode?downgrade=false'
+        headers = {'Content-type': 'application/json','Authorization': 'Basic %s'
+                                                                 % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers)
+        if not status:
+            raise Exception(content)
+        return json.loads(content)
+
     def create_index_with_rest(self, create_info, username="Administrator", password="password"):
         log.info("CREATE INDEX USING REST WITH PARAMETERS: " + str(create_info))
         authorization = base64.encodestring('%s:%s' % (username, password))
-        api = self.index_baseUrl + 'api/indexes?create=true'
+        api = self.index_baseUrl + 'internal/indexes?create=true'
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         params = json.loads("{0}".format(create_info).replace('\'', '"').replace('True', 'true').replace('False', 'false'))
         status, content, header = self._http_request(api, 'POST', headers=headers,
@@ -3684,7 +3868,7 @@ class RestConnection(object):
 
     def build_index_with_rest(self, id, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        api = self.index_baseUrl + 'api/indexes?build=true'
+        api = self.index_baseUrl + 'internal/indexes?build=true'
         build_info = {'ids': [id]}
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         status, content, header = self._http_request(api, 'PUT', headers=headers,
@@ -3695,7 +3879,7 @@ class RestConnection(object):
 
     def drop_index_with_rest(self, id, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}'.format(id)
+        url = 'internal/index/{0}'.format(id)
         api = self.index_baseUrl + url
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         status, content, header = self._http_request(api, 'DELETE', headers=headers)
@@ -3704,7 +3888,7 @@ class RestConnection(object):
 
     def get_all_indexes_with_rest(self, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/indexes'
+        url = 'internal/indexes'
         api = self.index_baseUrl + url
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         status, content, header = self._http_request(api, 'GET', headers=headers)
@@ -3714,7 +3898,7 @@ class RestConnection(object):
 
     def lookup_gsi_index_with_rest(self, id, body, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}?lookup=true'.format(id)
+        url = 'internal/index/{0}?lookup=true'.format(id)
         api = self.index_baseUrl + url
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         params = json.loads("{0}".format(body).replace('\'', '"').replace('True', 'true').replace('False', 'false'))
@@ -3728,7 +3912,7 @@ class RestConnection(object):
         if "limit" not in body.keys():
             body["limit"] = 900000
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}?scanall=true'.format(id)
+        url = 'internal/index/{0}?scanall=true'.format(id)
         api = self.index_baseUrl + url
         headers = {'Content-type': 'application/json','Authorization': 'Basic %s' % authorization}
         params = json.loads("{0}".format(body).replace('\'', '"').replace('True', 'true').replace('False', 'false'))
@@ -3745,7 +3929,7 @@ class RestConnection(object):
         if "limit" not in body.keys():
             body["limit"] = 300000
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}?range=true'.format(id)
+        url = 'internal/index/{0}?range=true'.format(id)
         api = self.index_baseUrl + url
         headers = {'Content-type': 'application/json',
                    'Authorization': 'Basic %s' % authorization}
@@ -3764,7 +3948,7 @@ class RestConnection(object):
 
     def multiscan_for_gsi_index_with_rest(self, id, body, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}?multiscan=true'.format(id)
+        url = 'internal/index/{0}?multiscan=true'.format(id)
         api = self.index_baseUrl + url
         headers = {'Accept': 'application/json','Authorization': 'Basic %s' % authorization}
         params = json.loads("{0}".format(body).replace('\'', '"').replace(
@@ -3787,11 +3971,12 @@ class RestConnection(object):
 
     def multiscan_count_for_gsi_index_with_rest(self, id, body, username="Administrator", password="password"):
         authorization = base64.encodestring('%s:%s' % (username, password))
-        url = 'api/index/{0}?multiscancount=true'.format(id)
+        url = 'internal/index/{0}?multiscancount=true'.format(id)
         api = self.index_baseUrl + url
         headers = {'Accept': 'application/json','Authorization': 'Basic %s' % authorization}
-        params = json.loads("{0}".format(body).replace('\'', '"').replace(
-            'True', 'true').replace('False', 'false'))
+        count_cmd_body = body.replace('\'', '"').replace('True', 'true').replace('False', 'false')
+        count_cmd_body = count_cmd_body.replace("~[]{}UnboundedtruenilNA~", "~[]{}UnboundedTruenilNA~")
+        params = json.loads(count_cmd_body)
         params = json.dumps(params).encode("ascii", "ignore").replace("\\\\", "\\")
         log.info(json.dumps(params).encode("ascii", "ignore"))
         status, content, header = self._http_request(api, 'GET', headers=headers,
@@ -3818,7 +4003,7 @@ class RestConnection(object):
 
     'Get list of current users and rols assigned to them'
     def retrieve_user_roles(self):
-        url = "/settings/rbac/users" + "?pageSize=100"
+        url = "/settings/rbac/users"
         api = self.baseUrl + url
         status, content, header = self._http_request(api, 'GET')
         if not status:
@@ -3902,6 +4087,338 @@ class RestConnection(object):
             raise Exception(content)
         return json.loads(content)
 
+    # Applicable to eventing service
+    '''
+        Save the Function so that it is visible in UI
+    '''
+    def save_function(self, name, body):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/saveAppTempStore/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers,
+                                                     params=json.dumps(body).encode("ascii", "ignore"))
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Deploy the Function
+    '''
+    def deploy_function(self, name, body):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/setApplication/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers,
+                                                     params=json.dumps(body).encode("ascii", "ignore"))
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            GET all the Functions
+    '''
+    def get_all_functions(self):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "api/v1/functions"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Undeploy the Function
+    '''
+    def set_settings_for_function(self, name, body):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/setSettings/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers,
+                                                     params=json.dumps(body).encode("ascii", "ignore"))
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+        undeploy the Function 
+    '''
+    def undeploy_function(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "api/v1/functions/" + name +"/settings"
+        body= {"deployment_status": False, "processing_status": False}
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers,
+                                                     params=json.dumps(body).encode("ascii", "ignore"))
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+        Delete all the functions 
+    '''
+    def delete_all_function(self):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "api/v1/functions"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'DELETE', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Delete single function
+    '''
+    def delete_single_function(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "api/v1/functions/" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'DELETE', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Delete the Function from UI
+    '''
+    def delete_function_from_temp_store(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/deleteAppTempStore/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'DELETE', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Delete the Function
+    '''
+    def delete_function(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/deleteApplication/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'DELETE', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Export the Function
+    '''
+    def export_function(self, name):
+        export_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/getAppTempStore/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        if status:
+            json_parsed = json.loads(content)
+            for key in json_parsed[0].keys(): # returns an array
+                tokens = key.split(":")
+                val = json_parsed[0][key]
+                if len(tokens) == 1:
+                    field = tokens[0]
+                    export_map[field] = val
+        return export_map
+
+    '''
+             Ensure that the eventing node is out of bootstrap node
+    '''
+    def get_deployed_eventing_apps(self):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "getDeployedApps"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        return json.loads(content)
+
+    '''
+             Get Eventing processing stats
+    '''
+    def get_event_processing_stats(self, name, eventing_map=None):
+        if eventing_map is None:
+            eventing_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "getEventProcessingStats?name=" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if status:
+            json_parsed = json.loads(content)
+            for key in json_parsed.keys():
+                tokens = key.split(":")
+                val = json_parsed[key]
+                if len(tokens) == 1:
+                    field = tokens[0]
+                    eventing_map[field] = val
+        return eventing_map
+
+    '''
+            Get Aggregate Eventing processing stats
+    '''
+    def get_aggregate_event_processing_stats(self, name, eventing_map=None):
+        if eventing_map is None:
+            eventing_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "getAggEventProcessingStats?name=" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if status:
+            json_parsed = json.loads(content)
+            for key in json_parsed.keys():
+                tokens = key.split(":")
+                val = json_parsed[key]
+                if len(tokens) == 1:
+                    field = tokens[0]
+                    eventing_map[field] = val
+        return eventing_map
+
+    '''
+            Get Eventing execution stats
+    '''
+    def get_event_execution_stats(self, name, eventing_map=None):
+        if eventing_map is None:
+            eventing_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "getExecutionStats?name=" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if status:
+            json_parsed = json.loads(content)
+            for key in json_parsed.keys():
+                tokens = key.split(":")
+                val = json_parsed[key]
+                if len(tokens) == 1:
+                    field = tokens[0]
+                    eventing_map[field] = val
+        return eventing_map
+
+    '''
+            Get Eventing failure stats
+    '''
+    def get_event_failure_stats(self, name, eventing_map=None):
+        if eventing_map is None:
+            eventing_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "getFailureStats?name=" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if status:
+            json_parsed = json.loads(content)
+            for key in json_parsed.keys():
+                tokens = key.split(":")
+                val = json_parsed[key]
+                if len(tokens) == 1:
+                    field = tokens[0]
+                    eventing_map[field] = val
+        return eventing_map
+
+    '''
+            Get all eventing stats
+    '''
+    def get_all_eventing_stats(self, seqs_processed=False, eventing_map=None):
+        if eventing_map is None:
+            eventing_map = {}
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        if seqs_processed:
+            url = "api/v1/stats?type=full"
+        else:
+            url = "api/v1/stats"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        return json.loads(content)
+
+    '''
+            Cleanup eventing 
+    '''
+    def cleanup_eventing(self):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "cleanupEventing"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Start debugger
+    '''
+    def start_eventing_debugger(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/startDebugger/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Stop debugger
+    '''
+    def stop_eventing_debugger(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/stopDebugger/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    '''
+            Get debugger url
+    '''
+    def get_eventing_debugger_url(self, name):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "_p/event/getDebuggerUrl/?name=" + name
+        api = self.baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
+
+    def create_function(self, name, body):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "api/v1/functions/" + name
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'POST', headers=headers,
+                                                     params=json.dumps(body).encode("ascii", "ignore"))
+        if not status:
+            raise Exception(content)
+        return content
+
+    def get_eventing_go_routine_dumps(self):
+        authorization = base64.encodestring('%s:%s' % (self.username, self.password))
+        url = "debug/pprof/goroutine?debug=1"
+        api = self.eventing_baseUrl + url
+        headers = {'Content-type': 'application/json', 'Authorization': 'Basic %s' % authorization}
+        status, content, header = self._http_request(api, 'GET', headers=headers)
+        if not status:
+            raise Exception(content)
+        return content
 
 
 class MembaseServerVersion:
@@ -3922,6 +4439,9 @@ class OtpNode(object):
         # its normally ns_1@10.20.30.40
         if id.find('@') >= 0:
             self.ip = id[id.index('@') + 1:]
+            if self.ip.count(':') > 0:
+                # raw ipv6? enclose in square brackets
+                self.ip = '[' + self.ip + ']'
         self.status = status
 
 
@@ -3963,7 +4483,7 @@ class NodeDiskStorage(object):
 
 class Bucket(object):
     def __init__(self, bucket_size='', name="", authType="sasl", saslPassword="", num_replicas=0, port=11211, master_id=None,
-                 type='', eviction_policy="valueOnly", bucket_priority=None, uuid="", lww=False):
+                 type='', eviction_policy="valueOnly", bucket_priority=None, uuid="", lww=False, maxttl=None):
         self.name = name
         self.port = port
         self.type = type
@@ -3983,6 +4503,7 @@ class Bucket(object):
         self.bucket_priority = bucket_priority
         self.uuid = uuid
         self.lww = lww
+        self.maxttl = maxttl
 
 
     def __str__(self):
@@ -4064,7 +4585,10 @@ class RestParser(object):
             index_map[bucket_name][index_name]['status'] = map['status'].encode('ascii', 'ignore')
             index_map[bucket_name][index_name]['progress'] = str(map['progress']).encode('ascii', 'ignore')
             index_map[bucket_name][index_name]['definition'] = map['definition'].encode('ascii', 'ignore')
-            index_map[bucket_name][index_name]['hosts'] = map['hosts'][0].encode('ascii', 'ignore')
+            if len(map['hosts']) == 1:
+                index_map[bucket_name][index_name]['hosts'] = map['hosts'][0].encode('ascii', 'ignore')
+            else:
+                index_map[bucket_name][index_name]['hosts'] = map['hosts']
             index_map[bucket_name][index_name]['id'] = map['id']
         return index_map
 
@@ -4100,7 +4624,7 @@ class RestParser(object):
         node.curr_items = 0
         if 'interestingStats' in parsed and 'curr_items' in parsed['interestingStats']:
             node.curr_items = parsed['interestingStats']['curr_items']
-        node.port = parsed["hostname"][parsed["hostname"].find(":") + 1:]
+        node.port = parsed["hostname"][parsed["hostname"].rfind(":") + 1:]
         node.os = parsed['os']
 
         if "services" in parsed:
@@ -4111,6 +4635,9 @@ class RestParser(object):
                 node.ip = node.id[node.id.index('@') + 1:]
         elif "hostname" in parsed:
             node.ip = parsed["hostname"].split(":")[0]
+        # if raw-ipv6, include enclosing square brackets
+        if parsed["hostname"].startswith('['):
+            node.ip = parsed["hostname"].rsplit(":", 1)[0]
 
         # memoryQuota
         if 'memoryQuota' in parsed:

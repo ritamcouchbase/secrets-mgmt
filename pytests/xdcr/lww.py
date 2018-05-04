@@ -49,6 +49,8 @@ class Lww(XDCRNewBaseTest):
             conn.log_command_output(output, error)
             output, error = conn.execute_command("/etc/init.d/ntpd start")
             conn.log_command_output(output, error)
+            output, error = conn.execute_command("systemctl start ntpd")
+            conn.log_command_output(output, error)            
             output, error = conn.execute_command("ntpdate -q " + ntp_server)
             conn.log_command_output(output, error)
 
@@ -58,6 +60,8 @@ class Lww(XDCRNewBaseTest):
             output, error = conn.execute_command("chkconfig ntpd off")
             conn.log_command_output(output, error)
             output, error = conn.execute_command("/etc/init.d/ntpd stop")
+            conn.log_command_output(output, error)
+            output, error = conn.execute_command("systemctl stop ntpd")
             conn.log_command_output(output, error)
 
     def _offset_wall_clock(self, cluster=None, offset_secs=0, inc=True, offset_drift=-1):
@@ -173,7 +177,7 @@ class Lww(XDCRNewBaseTest):
     def _get_max_cas(self, node, bucket, vbucket_id=0):
         max_cas = 0
         conn = RemoteMachineShellConnection(node)
-        command = "/opt/couchbase/bin/cbstats " + node.ip + ":11210 vbucket-details " + str(vbucket_id) + " -b " + bucket
+        command = "/opt/couchbase/bin/cbstats -u cbadminbucket -p password " + node.ip + ":11210 vbucket-details " + str(vbucket_id) + " -b " + bucket
         output, error = conn.execute_command(command)
         conn.log_command_output(output, error)
         for line in output:
@@ -184,7 +188,7 @@ class Lww(XDCRNewBaseTest):
 
     def _get_vbucket_id(self, node, bucket, key):
         conn = RemoteMachineShellConnection(node)
-        command = "curl -s http://" + node.ip + ":8091/pools/default/buckets/" + bucket + " | /opt/couchbase/bin/tools/vbuckettool - " + key
+        command = "curl -u cbadminbucket:password -s http://" + node.ip + ":8091/pools/default/buckets/" + bucket + " | /opt/couchbase/bin/tools/vbuckettool - " + key
         output, error = conn.execute_command(command)
         conn.log_command_output(output, error)
         return output[0].split()[5]
@@ -218,6 +222,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -240,6 +246,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled('sasl_bucket'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -264,6 +272,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled('standard_bucket'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -287,12 +297,15 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(bucket='lww'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+
         self._create_buckets(bucket='nolww', ramQuotaMB=100, proxyPort=STANDARD_BUCKET_PORT + 1, src_lww=False,
                             dst_lww=False)
         self.assertFalse(src_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on source bucket")
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -386,6 +399,8 @@ class Lww(XDCRNewBaseTest):
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -445,6 +460,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -508,6 +525,8 @@ class Lww(XDCRNewBaseTest):
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -563,6 +582,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(bucket='lww'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -605,6 +626,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(bucket='lww'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -674,6 +697,7 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+        self.sleep(10)
 
         try:
             self.setup_xdcr()
@@ -691,6 +715,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -744,6 +770,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -805,6 +833,8 @@ class Lww(XDCRNewBaseTest):
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -862,6 +892,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(bucket='lww'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -912,6 +944,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(bucket='lww'), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -970,6 +1004,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(bucket='nolww'), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1042,6 +1078,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1067,6 +1105,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1094,6 +1134,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1108,8 +1150,11 @@ class Lww(XDCRNewBaseTest):
 
         conn = RemoteMachineShellConnection(self.c1_cluster.get_master_node())
         conn.stop_couchbase()
+        self.sleep(5)
         conn.start_couchbase()
-
+        self.wait_service_started(self.c1_cluster.get_master_node())
+        self.sleep(600, "Slepping so that vBuckets are ready and to avoid \
+        MemcachedError: Memcached error #1 'Not found':   for vbucket :0")
         self.verify_results()
 
     def test_lww_with_erlang_restart_at_master(self):
@@ -1121,6 +1166,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1137,7 +1184,9 @@ class Lww(XDCRNewBaseTest):
         conn = RemoteMachineShellConnection(self.c1_cluster.get_master_node())
         conn.kill_erlang()
         conn.start_couchbase()
-
+        self.wait_service_started(self.c1_cluster.get_master_node())
+        self.sleep(600, "Slepping so that vBuckets are ready and to avoid \
+        MemcachedError: Memcached error #1 'Not found':   for vbucket :0")
         self.verify_results()
 
     def test_lww_with_memcached_restart_at_master(self):
@@ -1149,6 +1198,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1165,7 +1216,7 @@ class Lww(XDCRNewBaseTest):
         conn = RemoteMachineShellConnection(self.c1_cluster.get_master_node())
         conn.pause_memcached()
         conn.unpause_memcached()
-
+        self.sleep(600,"Wait such that any replication happening should get completed after memcached restart.")
         self.verify_results()
 
     def test_seq_upd_on_bi_with_target_clock_faster(self):
@@ -1186,6 +1237,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW not enabled on dest bucket as expected")
 
         self._offset_wall_clock(self.c2_cluster, offset_secs=3600)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1255,6 +1308,8 @@ class Lww(XDCRNewBaseTest):
 
         self._offset_wall_clock(self.c1_cluster, offset_secs=3600)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -1315,6 +1370,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on dest bucket as expected")
 
         self._offset_wall_clock(self.c2_cluster, offset_secs=3600)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1377,6 +1434,8 @@ class Lww(XDCRNewBaseTest):
 
         self._offset_wall_clock(self.c2_cluster, offset_secs=3600)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1430,6 +1489,8 @@ class Lww(XDCRNewBaseTest):
         self.c1_cluster.delete_bucket(bucket_name='default')
         self._create_buckets(bucket='default', ramQuotaMB=100, skip_dst=True)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -1453,6 +1514,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -1473,7 +1536,7 @@ class Lww(XDCRNewBaseTest):
 
         task = self.c1_cluster.async_rebalance_in()
         task.result()
-
+        self.sleep(300)
         self.verify_results()
 
     def test_lww_while_failover_node_at_src(self):
@@ -1485,6 +1548,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1515,7 +1580,7 @@ class Lww(XDCRNewBaseTest):
                     src_conn.add_back_node(otpNode=node.id)
             rebalance = self.cluster.async_rebalance(self.c1_cluster.get_nodes(), [], [])
             rebalance.result()
-
+        self.sleep(300)
         self.verify_results()
 
     def test_lww_with_rebalance_in_and_simult_upd_del(self):
@@ -1527,6 +1592,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1558,6 +1625,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1594,6 +1663,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1639,6 +1710,7 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertFalse(dest_conn.is_lww_enabled(), "LWW enabled on dest bucket")
         self.log.info("LWW not enabled on dest bucket as expected")
+        self.sleep(10)
 
         try:
             self.setup_xdcr()
@@ -1656,6 +1728,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1703,6 +1777,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1743,6 +1819,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1774,6 +1852,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -1799,6 +1879,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1846,6 +1928,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("Enabling auto failover on " + str(self.c1_cluster.get_master_node()))
         src_conn.update_autofailover_settings(enabled=True, timeout=30)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -1874,6 +1958,8 @@ class Lww(XDCRNewBaseTest):
             self.log.info("LWW enabled on source bucket " + str(bucket.name) + " as expected")
             self.assertTrue(dest_conn.is_lww_enabled(bucket=bucket.name), "LWW not enabled on source bucket " + str(bucket.name))
             self.log.info("LWW enabled on source bucket " + str(bucket.name) + " as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1909,6 +1995,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(c3_conn.is_lww_enabled(), "LWW not enabled on c3 bucket")
         self.log.info("LWW enabled on c3 bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -1936,6 +2024,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -1969,6 +2059,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2023,6 +2115,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2080,6 +2174,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -2106,6 +2202,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2143,6 +2241,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2183,6 +2283,8 @@ class Lww(XDCRNewBaseTest):
         self._offset_wall_clock(self.c1_cluster, offset_secs=3600)
         self._offset_wall_clock(self.c2_cluster, offset_secs=7200)
         self._offset_wall_clock(self.c3_cluster, offset_secs=10800)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2257,6 +2359,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(c3_conn.is_lww_enabled(), "LWW not enabled on C3 bucket")
         self.log.info("LWW enabled on C3 bucket as expected")
 
+        self.sleep(10)
+
         try:
             self.setup_xdcr()
         except Exception as e:
@@ -2288,6 +2392,8 @@ class Lww(XDCRNewBaseTest):
         self._offset_wall_clock(self.c1_cluster, offset_secs=3600)
         self._offset_wall_clock(self.c2_cluster, offset_secs=7200)
         self._offset_wall_clock(self.c3_cluster, offset_secs=10800)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2344,6 +2450,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(src_conn.is_lww_enabled(), "LWW not enabled on source bucket")
         self.log.info("LWW enabled on source bucket as expected")
 
+        self.sleep(10)
+
         gen = DocumentGenerator('lww', '{{"key1":"value1"}}', xrange(100), start=0, end=1)
         self.c1_cluster.load_all_buckets_from_generator(gen)
 
@@ -2367,6 +2475,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on source bucket as expected")
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2396,6 +2506,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self._offset_wall_clock(self.c2_cluster, offset_secs=900)
 
         self.setup_xdcr()
@@ -2413,8 +2525,8 @@ class Lww(XDCRNewBaseTest):
         self.c1_cluster.load_all_buckets_from_generator(gen)
 
         self.c1_cluster.resume_all_replications_by_id()
-
-        self._wait_for_replication_to_catchup()
+        self.sleep(300)
+        self._wait_for_replication_to_catchup(fetch_bucket_stats_by="hour")
 
         max_cas_c2_after = self._get_max_cas(node=self.c2_cluster.get_master_node(), bucket='default', vbucket_id=vbucket_id)
 
@@ -2449,6 +2561,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on dest bucket as expected")
 
         self._offset_wall_clock(self.c1_cluster, offset_secs=900)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2500,6 +2614,8 @@ class Lww(XDCRNewBaseTest):
 
         self._offset_wall_clock(self.c2_cluster, offset_secs=900)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -2515,8 +2631,8 @@ class Lww(XDCRNewBaseTest):
         self.c1_cluster.load_all_buckets_from_generator(gen)
 
         self.c1_cluster.resume_all_replications_by_id()
-
-        self._wait_for_replication_to_catchup()
+        self.sleep(300)
+        self._wait_for_replication_to_catchup(fetch_bucket_stats_by="hour")
 
         max_cas_c2_after = self._get_max_cas(node=self.c2_cluster.get_master_node(), bucket='default', vbucket_id=vbucket_id)
 
@@ -2557,6 +2673,8 @@ class Lww(XDCRNewBaseTest):
         self.log.info("LWW enabled on dest bucket as expected")
 
         self._offset_wall_clock(self.c1_cluster, offset_secs=900)
+
+        self.sleep(10)
 
         self.setup_xdcr()
         self.merge_all_buckets()
@@ -2614,6 +2732,8 @@ class Lww(XDCRNewBaseTest):
 
         self._offset_wall_clock(self.c1_cluster, offset_secs=900)
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
 
@@ -2635,7 +2755,7 @@ class Lww(XDCRNewBaseTest):
 
         self.c1_cluster.resume_all_replications_by_id()
 
-        dest_lww = self._get_python_sdk_client(self.c2_cluster.get_master_node().ip, 'default'. self.c2_cluster)
+        dest_lww = self._get_python_sdk_client(self.c2_cluster.get_master_node().ip, 'default', self.c2_cluster)
         self.sleep(10)
 
         obj = dest_lww.get(key='lww-0')
@@ -2671,6 +2791,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(dest_conn.is_lww_enabled(), "LWW not enabled on dest bucket")
         self.log.info("LWW enabled on dest bucket as expected")
 
+        self.sleep(10)
+
         self.setup_xdcr()
         self.merge_all_buckets()
         self.c1_cluster.pause_all_replications_by_id()
@@ -2703,6 +2825,8 @@ class Lww(XDCRNewBaseTest):
         self.assertTrue(src_conn.is_lww_enabled(), "LWW not enabled on source bucket")
         self.log.info("LWW enabled on source bucket as expected")
 
+        self.sleep(10)
+
         self.c1_cluster.delete_bucket(bucket_name='default')
         self._create_buckets(bucket='default', ramQuotaMB=100, src_lww=False, skip_dst=True)
 
@@ -2715,6 +2839,8 @@ class Lww(XDCRNewBaseTest):
         self._create_buckets(bucket='default', ramQuotaMB=100, skip_dst=True)
         self.assertTrue(src_conn.is_lww_enabled(), "LWW not enabled on source bucket")
         self.log.info("LWW enabled on source bucket as expected")
+
+        self.sleep(10)
 
         conn = RemoteMachineShellConnection(self.c1_cluster.get_master_node())
         command = "curl -X POST -u Administrator:password " + self.c1_cluster.get_master_node().ip + \
@@ -2732,6 +2858,8 @@ class Lww(XDCRNewBaseTest):
         self._create_buckets(bucket='default', ramQuotaMB=100, skip_dst=True)
         self.assertTrue(src_conn.is_lww_enabled(), "LWW not enabled on source bucket")
         self.log.info("LWW enabled on source bucket as expected")
+
+        self.sleep(10)
 
         gen1 = BlobGenerator("lww-", "lww-", self._value_size, end=self._num_items)
         self.c1_cluster.load_all_buckets_from_generator(gen1)

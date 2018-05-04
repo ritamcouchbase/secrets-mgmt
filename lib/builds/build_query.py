@@ -17,7 +17,7 @@ from testconstants import COUCHBASE_VERSION_2
 from testconstants import COUCHBASE_VERSION_3
 from testconstants import COUCHBASE_VERSION_2_WITH_REL
 from testconstants import COUCHBASE_RELEASE_FROM_VERSION_3
-from testconstants import COUCHBASE_FROM_VERSION_3
+from testconstants import COUCHBASE_FROM_VERSION_3, COUCHBASE_FROM_SPOCK
 from testconstants import CB_RELEASE_REPO
 from testconstants import CB_LATESTBUILDS_REPO
 from testconstants import CE_EE_ON_SAME_FOLDER
@@ -337,7 +337,10 @@ class BuildQuery(object):
                             else:
                                 os_name = "centos6"
                         elif "suse" in os_version.lower():
-                            os_name = "suse11"
+                            if "11" in os_version.lower():
+                                os_name = "suse11"
+                            elif "12" in os_version.lower():
+                                os_name = "suse12"
                         elif "oracle linux" in os_version.lower():
                             os_name = "oel6"
                         else:
@@ -389,7 +392,10 @@ class BuildQuery(object):
                             else:
                                 os_name = "centos6"
                         elif "suse" in os_version.lower():
-                            os_name = "suse11"
+                            if "11" in os_version.lower():
+                                os_name = "suse11"
+                            elif "12" in os_version.lower():
+                                os_name = "suse12"
                         elif "oracle linux" in os_version.lower():
                             os_name = "oel6"
                         else:
@@ -561,7 +567,7 @@ class BuildQuery(object):
             """ windows build name: couchbase_server-enterprise-windows-amd64-3.0.0-892.exe
                                     couchbase-server-enterprise_3.5.0-952-windows_amd64.exe """
             build.name = build_info
-            deliverable_type = ["exe", "rpm", "deb", "zip"]
+            deliverable_type = ["exe", "msi", "rpm", "deb", "zip"]
             if build_info[-3:] in deliverable_type:
                 build.deliverable_type = build_info[-3:]
                 build_info = build_info[:-4]
@@ -622,9 +628,9 @@ class BuildQuery(object):
                 elif "-amd64" in build_info:
                     build.architecture_type = "x86_64"
                     build_info = build_info.replace("-amd64", "")
-                del_words = ["centos6", "debian7", "debian8", "ubuntu12.04",
-                             "ubuntu14.04", "ubuntu16.04", "windows", "macos",
-                             "centos7", "suse11"]
+                del_words = ["centos6", "debian7", "debian8", "debian9",
+                             "ubuntu12.04", "ubuntu14.04", "ubuntu16.04",
+                             "windows", "macos", "centos7", "suse11", "suse12"]
                 if build_info.startswith("couchbase-server"):
                     build.product = build_info.split("-")
                     build.product = "-".join([i for i in build.product \
@@ -733,7 +739,11 @@ class BuildQuery(object):
                     build.architecture_type = "amd64"
                 elif "x86" in architecture_type:
                     build.architecture_type = "x86"
-            if "-" in version and int(version.split("-")[1]) >= 2924:
+            """
+                    In spock from build 2924 and later release, we only support
+                    msi installation method on windows
+            """
+            if "-" in version and version.split("-")[0] in COUCHBASE_FROM_SPOCK:
                 deliverable_type = "msi"
 
         if "deb" in deliverable_type and "centos6" in edition_type:
@@ -776,9 +786,13 @@ class BuildQuery(object):
                    "-" + centos_version + "." + build.architecture_type + \
                    "." + build.deliverable_type
             elif "suse" in distribution_version:
-                if "suse linux enterprise server 12" in distribution_version:
-                    suse_version="suse12"
-                    build.distribution_version = "suse12"
+                if "suse 12" in distribution_version:
+                    if version[:5] in COUCHBASE_FROM_SPOCK:
+                        suse_version="suse12"
+                        build.distribution_version = "suse12"
+                    else:
+                        self.fail("suse 12 does not support on this version %s "
+                                                                  % version[:5])
                 else:
                     suse_version="suse11"
                     build.distribution_version = "suse11"
@@ -809,6 +823,9 @@ class BuildQuery(object):
                 elif "debian gnu/linux 8" in distribution_version:
                     build.distribution_version = "debian8"
                     os_name = "debian8"
+                elif "debian gnu/linux 9" in distribution_version:
+                    build.distribution_version = "debian9"
+                    os_name = "debian9"
                 elif "windows" in distribution_version:
                     os_name = "windows"
                     if "x86_64" not in architecture_type:
