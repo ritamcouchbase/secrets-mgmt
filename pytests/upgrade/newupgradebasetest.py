@@ -1,7 +1,7 @@
 import re
 import testconstants
 import gc
-import sys
+import sys, json
 import traceback
 import Queue
 from threading import Thread
@@ -17,6 +17,7 @@ from couchbase_helper.documentgenerator import BlobGenerator
 from scripts.install import InstallerJob
 from builds.build_query import BuildQuery
 from couchbase_helper.tuq_generators import JsonGenerator
+from pytests.fts.fts_callable import FTSCallable
 from pprint import pprint
 from testconstants import CB_REPO
 from testconstants import MV_LATESTBUILD_REPO
@@ -34,6 +35,7 @@ from testconstants import CE_EE_ON_SAME_FOLDER
 class NewUpgradeBaseTest(BaseTestCase):
     def setUp(self):
         super(NewUpgradeBaseTest, self).setUp()
+        self.log.info("==============  NewUpgradeBaseTest setup has started ==============")
         self.released_versions = ["2.0.0-1976-rel", "2.0.1", "2.5.0", "2.5.1",
                                   "2.5.2", "3.0.0", "3.0.1",
                                   "3.0.1-1444", "3.0.2", "3.0.2-1603", "3.0.3",
@@ -65,6 +67,12 @@ class NewUpgradeBaseTest(BaseTestCase):
         self.initial_build_type = self.input.param('initial_build_type', None)
         self.stop_persistence = self.input.param('stop_persistence', False)
         self.std_vbucket_dist = self.input.param("std_vbucket_dist", None)
+        self.cb_bucket_name = self.input.param('cb_bucket_name', 'travel-sample')
+        self.cb_server_ip = self.input.param("cb_server_ip", None)
+        self.cbas_bucket_name = self.input.param('cbas_bucket_name', 'travel')
+        self.cbas_dataset_name = self.input.param("cbas_dataset_name", 'travel_ds')
+        self.cbas_dataset_name_invalid = self.input.param('cbas_dataset_name_invalid', self.cbas_dataset_name)
+        self.cbas_bucket_name_invalid = self.input.param('cbas_bucket_name_invalid', self.cbas_bucket_name)
         self.rest_settings = self.input.membase_settings
         self.rest = None
         self.rest_helper = None
@@ -96,6 +104,8 @@ class NewUpgradeBaseTest(BaseTestCase):
         self.delete_ops_per = self.input.param("delete_ops_per", 0)
         self.update_ops_per = self.input.param("update_ops_per", 0)
         self.docs_per_day = self.input.param("doc-per-day", 49)
+        self.eventing_log_level = self.input.param('eventing_log_level', 'INFO')
+        self.batch_size = self.input.param("batch_size", 1000)
         self.doc_ops = self.input.param("doc_ops", False)
         if self.doc_ops:
             self.ops_dist_map = self.calculate_data_change_distribution(
@@ -122,8 +132,12 @@ class NewUpgradeBaseTest(BaseTestCase):
         self.partitions_per_pindex = \
             self.input.param("max_partitions_pindex", 32)
         self.index_kv_store = self.input.param("kvstore", None)
+        self.fts_obj = None
+        self.log.info("==============  NewUpgradeBaseTest setup has completed ==============")
+
 
     def tearDown(self):
+        self.log.info("==============  NewUpgradeBaseTest tearDown has started ==============")
         test_failed = (hasattr(self, '_resultForDoCleanups') and \
                        len(self._resultForDoCleanups.failures or \
                            self._resultForDoCleanups.errors)) or \
@@ -159,8 +173,9 @@ class NewUpgradeBaseTest(BaseTestCase):
                 self.fail(e)
             super(NewUpgradeBaseTest, self).tearDown()
             if self.upgrade_servers:
-                self._install(self.upgrade_servers,version=self.initial_version)
+                self._install(self.upgrade_servers)
         self.sleep(20, "sleep 20 seconds before run next test")
+        self.log.info("==============  NewUpgradeBaseTest tearDown has completed ==============")
 
     def _install(self, servers):
         params = {}
@@ -171,6 +186,9 @@ class NewUpgradeBaseTest(BaseTestCase):
         params['init_nodes'] = self.init_nodes
         if self.initial_build_type is not None:
             params['type'] = self.initial_build_type
+        if 5 <= int(self.initial_version[:1]) or 5 <= int(self.upgrade_versions[0][:1]):
+            params['fts_query_limit'] = 10000000
+
         self.log.info("will install {0} on {1}".format(self.initial_version, [s.ip for s in servers]))
         InstallerJob().parallel_install(servers, params)
         if self.product in ["couchbase", "couchbase-server", "cb"]:
@@ -198,24 +216,65 @@ class NewUpgradeBaseTest(BaseTestCase):
                 hostname = RemoteUtilHelper.use_hostname_for_server_settings(server)
                 server.hostname = hostname
 
-    def operations(self, servers):
-        self.quota = self._initialize_nodes(self.cluster, servers, self.disabled_consistent_view,
-                                            self.rebalanceIndexWaitingDisabled, self.rebalanceIndexPausingDisabled,
-                                            self.maxParallelIndexers, self.maxParallelReplicaIndexers, self.port)
+    def initial_services(self, services=None):
+        if services is not None:
+            if "-" in services:
+                set_services = services.split("-")
+            elif "," in services:
+                set_services = services.split(",")
+        else:
+            set_services = services
+        return set_services
+
+    def initialize_nodes(self, servers, services=None):
+        set_services = self.initial_services(services)
+        if 4.5 > float(self.initial_version[:3]):
+            self.gsi_type = "forestdb"
+        self.quota = self._initialize_nodes(self.cluster, servers,
+                                            self.disabled_consistent_view,
+                                            self.rebalanceIndexWaitingDisabled,
+                                            self.rebalanceIndexPausingDisabled,
+                                            self.maxParallelIndexers,
+                                            self.maxParallelReplicaIndexers, self.port,
+                                            services=set_services)
+
+    def operations(self, servers, services=None):
+        set_services = self.initial_services(services)
+
+        if 4.5 > float(self.initial_version[:3]):
+            self.gsi_type = "forestdb"
+        self.quota = self._initialize_nodes(self.cluster, servers,
+                                            self.disabled_consistent_view,
+                                            self.rebalanceIndexWaitingDisabled,
+                                            self.rebalanceIndexPausingDisabled,
+                                            self.maxParallelIndexers,
+                                            self.maxParallelReplicaIndexers, self.port,
+                                            services=set_services)
+
         if self.port and self.port != '8091':
             self.rest = RestConnection(self.master)
             self.rest_helper = RestHelper(self.rest)
+        if 5.0 <= float(self.initial_version[:3]):
+            self.add_built_in_server_user()
         self.sleep(7, "wait to make sure node is ready")
         if len(servers) > 1:
-            self.cluster.rebalance([servers[0]], servers[1:], [],
-                                   use_hostnames=self.use_hostnames)
-
+            if services is None:
+                self.cluster.rebalance([servers[0]], servers[1:], [],
+                                       use_hostnames=self.use_hostnames)
+            else:
+                for i in range(1, len(set_services)):
+                    self.cluster.rebalance([servers[0]], [servers[i]], [],
+                                           use_hostnames=self.use_hostnames,
+                                           services=[set_services[i]])
+                    self.sleep(10)
         self.buckets = []
         gc.collect()
         if self.input.param('extra_verification', False):
             self.total_buckets += 2
             print self.total_buckets
         self.bucket_size = self._get_bucket_size(self.quota, self.total_buckets)
+        if self.dgm_run:
+            self.bucket_size = 256
         self._bucket_creation()
         if self.stop_persistence:
             for server in servers:
@@ -793,3 +852,298 @@ class NewUpgradeBaseTest(BaseTestCase):
 
     def _gen_server_key(self, server):
         return "{0}:{1}".format(server.ip, server.port)
+
+    def generate_docs_simple(self, num_items, start=0):
+        from couchbase_helper.tuq_generators import JsonGenerator
+        json_generator = JsonGenerator()
+        return json_generator.generate_docs_simple(start=start, docs_per_day=self.docs_per_day)
+
+    def generate_docs(self, num_items, start=0):
+        try:
+            if self.dataset == "simple":
+                return self.generate_docs_simple(num_items, start)
+            if self.dataset == "array":
+                return self.generate_docs_array(num_items, start)
+            return getattr(self, 'generate_docs_' + self.dataset)(num_items, start)
+        except Exception, ex:
+            log.info(str(ex))
+            self.fail("There is no dataset %s, please enter a valid one" % self.dataset)
+
+    def create_save_function_body_test(self, appname, appcode, description="Sample Description",
+                                  checkpoint_interval=10000, cleanup_timers=False,
+                                  dcp_stream_boundary="everything", deployment_status=True,
+                                  skip_timer_threshold=86400,
+                                  sock_batch_size=1, tick_duration=60000, timer_processing_tick_interval=500,
+                                  timer_worker_pool_size=3, worker_count=3, processing_status=True,
+                                  cpp_worker_thread_count=1, multi_dst_bucket=False, execution_timeout=3,
+                                  data_chan_size=10000, worker_queue_cap=100000, deadline_timeout=6
+                                  ):
+        body = {}
+        body['appname'] = appname
+        script_dir = os.path.dirname(__file__)
+        abs_file_path = os.path.join(script_dir, appcode)
+        fh = open(abs_file_path, "r")
+        body['appcode'] = fh.read()
+        fh.close()
+        body['depcfg'] = {}
+        body['depcfg']['buckets'] = []
+        body['depcfg']['buckets'].append({"alias": self.dst_bucket_name, "bucket_name": self.dst_bucket_name})
+        if multi_dst_bucket:
+            body['depcfg']['buckets'].append({"alias": self.dst_bucket_name1, "bucket_name": self.dst_bucket_name1})
+        body['depcfg']['metadata_bucket'] = self.metadata_bucket_name
+        body['depcfg']['source_bucket'] = self.src_bucket_name
+        body['settings'] = {}
+        body['settings']['checkpoint_interval'] = checkpoint_interval
+        body['settings']['cleanup_timers'] = cleanup_timers
+        body['settings']['dcp_stream_boundary'] = dcp_stream_boundary
+        body['settings']['deployment_status'] = deployment_status
+        body['settings']['description'] = description
+        body['settings']['log_level'] = self.eventing_log_level
+        body['settings']['skip_timer_threshold'] = skip_timer_threshold
+        body['settings']['sock_batch_size'] = sock_batch_size
+        body['settings']['tick_duration'] = tick_duration
+        body['settings']['timer_processing_tick_interval'] = timer_processing_tick_interval
+        body['settings']['timer_worker_pool_size'] = timer_worker_pool_size
+        body['settings']['worker_count'] = worker_count
+        body['settings']['processing_status'] = processing_status
+        body['settings']['cpp_worker_thread_count'] = cpp_worker_thread_count
+        body['settings']['execution_timeout'] = execution_timeout
+        body['settings']['data_chan_size'] = data_chan_size
+        body['settings']['worker_queue_cap'] = worker_queue_cap
+        body['settings']['use_memory_manager'] = self.use_memory_manager
+        if execution_timeout != 3:
+            deadline_timeout = execution_timeout + 1
+        body['settings']['deadline_timeout'] = deadline_timeout
+        return body
+
+    def _verify_backup_events_definition(self, bk_fxn):
+        backup_path = self.backupset.directory + "/backup/{0}/".format(self.backups[0])
+        events_file_name = "events.json"
+        bk_file_events_dir = "/tmp/backup_events{0}/".format(self.master.ip)
+        bk_file_events_path = bk_file_events_dir + events_file_name
+
+        shell = RemoteMachineShellConnection(self.backupset.backup_host)
+        self.log.info("create local dir")
+        if os.path.exists(bk_file_events_dir):
+            shutil.rmtree(bk_file_events_dir)
+        os.makedirs(bk_file_events_dir)
+        self.log.info("copy eventing definition from remote to local")
+        shell.copy_file_remote_to_local(backup_path+events_file_name,
+                                        bk_file_events_path)
+        local_bk_def = open(bk_file_events_path)
+        bk_file_fxn = json.loads(local_bk_def.read())
+        for k, v in bk_file_fxn[0]["settings"].iteritems():
+            if v != bk_fxn[0]["settings"][k]:
+                self.log.info("key {0} has value not match".format(k))
+                self.log.info("{0} : {1}".format(v, bk_fxn[0]["settings"][k]))
+        self.log.info("remove tmp file in slave")
+        if os.path.exists(bk_file_events_dir):
+            shutil.rmtree(bk_file_events_dir)
+
+    def _verify_restore_events_definition(self, bk_fxn):
+        backup_path = self.backupset.directory + "/backup/{0}/".format(self.backups[0])
+        events_file_name = "events.json"
+        bk_file_events_dir = "/tmp/backup_events{0}/".format(self.master.ip)
+        bk_file_events_path = bk_file_events_dir + events_file_name
+        rest = RestConnection(self.backupset.restore_cluster_host)
+        rs_fxn = rest.get_all_functions()
+
+        if self.ordered(rs_fxn) != self.ordered(bk_fxn):
+            self.fail("Events definition of backup and restore cluster are different")
+
+    def ordered(self, obj):
+        if isinstance(obj, dict):
+            return sorted((k, ordered(v)) for k, v in obj.items())
+        if isinstance(obj, list):
+            return sorted(ordered(x) for x in obj)
+        else:
+            return obj
+
+    def create_fts_index_query_compare(self, queue=None):
+        """
+        Call before upgrade
+        1. creates a default index, one per bucket
+        2. Loads fts json data
+        3. Runs queries and compares the results against ElasticSearch
+        """
+        try:
+            self.fts_obj = FTSCallable(nodes=self.servers, es_validate=True)
+            for bucket in self.buckets:
+                self.fts_obj.create_default_index(
+                    index_name="index_{0}".format(bucket.name),
+                    bucket_name=bucket.name)
+            self.fts_obj.load_data(self.num_items)
+            self.fts_obj.wait_for_indexing_complete()
+            for index in self.fts_obj.fts_indexes:
+                self.fts_obj.run_query_and_compare(index=index, num_queries=20)
+            return self.fts_obj
+        except Exception, ex:
+            print ex
+            if queue is not None:
+                queue.put(False)
+        if queue is not None:
+            queue.put(True)
+
+    def update_delete_fts_data_run_queries(self, fts_obj):
+        """
+        To call after (preferably) upgrade
+        :param fts_obj: the FTS object created in create_fts_index_query_compare()
+        """
+        fts_obj.async_perform_update_delete()
+        for index in fts_obj.fts_indexes:
+            fts_obj.run_query_and_compare(index)
+
+    def delete_all_fts_artifacts(self, fts_obj):
+        """
+        Call during teardown of upgrade test
+        :param fts_obj: he FTS object created in create_fts_index_query_compare()
+        """
+        fts_obj.delete_all()
+
+    def run_fts_query_and_compare(self, queue=None):
+        try:
+            self.log.info("Verify fts via queries again")
+            self.update_delete_fts_data_run_queries(self.fts_obj)
+        except Exception, ex:
+            print ex
+            if queue is not None:
+                queue.put(False)
+        if queue is not None:
+            queue.put(True)
+
+    """ for cbas test """
+    def load_sample_buckets(self, servers=None, bucketName=None, total_items=None,
+                                                                        rest=None):
+        """ Load the specified sample bucket in Couchbase """
+        self.assertTrue(rest.load_sample(bucketName),
+                        "Failure while loading sample bucket: {0}".format(bucketName))
+
+        """ check for load data into travel-sample bucket """
+        if total_items:
+            import time
+            end_time = time.time() + 600
+            while time.time() < end_time:
+                self.sleep(20)
+                num_actual = 0
+                if not servers:
+                    num_actual = self.get_item_count(self.master,bucketName)
+                else:
+                    for server in servers:
+                        num_actual += self.get_item_count(server,bucketName)
+                if int(num_actual) == total_items:
+                    self.log.info("{0} items are loaded in the {1} bucket"\
+                                           .format(num_actual ,bucketName))
+                    break
+                self.log.info("{0} items are loaded in the {1} bucket"\
+                                        .format(num_actual, bucketName))
+            if int(num_actual) != total_items:
+                return False
+        else:
+            self.sleep(120)
+
+        return True
+
+    def execute_statement_on_cbas_via_rest(self, statement, mode=None, rest=None,
+                                           timeout=120, client_context_id=None,
+                                           username=None, password=None):
+        """
+        Executes a statement on CBAS using the REST API using REST Client
+        """
+        pretty = "true"
+        if not rest:
+            rest = RestConnection(self.cbas_node)
+        try:
+            self.log.info("Running query on cbas: {0}".format(statement))
+            response = rest.execute_statement_on_cbas(statement, mode, pretty,
+                                                      timeout, client_context_id,
+                                                      username, password)
+            response = json.loads(response)
+            if "errors" in response:
+                errors = response["errors"]
+            else:
+                errors = None
+
+            if "results" in response:
+                results = response["results"]
+            else:
+                results = None
+
+            if "handle" in response:
+                handle = response["handle"]
+            else:
+                handle = None
+
+            return response["status"], response[
+                "metrics"], errors, results, handle
+
+        except Exception,e:
+            raise Exception(str(e))
+
+    def create_bucket_on_cbas(self, cbas_bucket_name, cb_bucket_name,
+                              cb_server_ip=None,
+                              validate_error_msg=False,
+                              username = None, password = None):
+        """
+        Creates a bucket on CBAS
+        """
+        if cb_server_ip:
+            cmd_create_bucket = "create bucket " + cbas_bucket_name + \
+                              " with {\"name\":\"" + cb_bucket_name + \
+                              "\",\"nodes\":\"" + cb_server_ip + "\"};"
+        else:
+            '''DP3 doesn't need to specify cb server ip as cbas node is
+               part of the cluster.
+            '''
+            cmd_create_bucket = "create bucket " + cbas_bucket_name + \
+                            " with {\"name\":\"" + cb_bucket_name + "\"};"
+        status, metrics, errors, results, _ = \
+                   self.execute_statement_on_cbas_via_rest(cmd_create_bucket,
+                                                           username=username,
+                                                           password=password)
+
+        if validate_error_msg:
+            return self.validate_error_in_response(status, errors)
+        else:
+            if status != "success":
+                return False
+            else:
+                return True
+
+    def create_dataset_on_bucket(self, cbas_bucket_name, cbas_dataset_name,
+                                 where_field=None, where_value = None,
+                                 validate_error_msg=False, username = None,
+                                 password = None):
+        """
+        Creates a shadow dataset on a CBAS bucket
+        """
+        cmd_create_dataset = "create shadow dataset {0} on {1};".format(
+                                     cbas_dataset_name, cbas_bucket_name)
+        if where_field and where_value:
+            cmd_create_dataset = "create shadow dataset {0} on {1} WHERE `{2}`=\"{3}\";"\
+                                              .format(cbas_dataset_name, cbas_bucket_name,
+                                                      where_field, where_value)
+        status, metrics, errors, results, _ = \
+                        self.execute_statement_on_cbas_via_rest(cmd_create_dataset,
+                                                                username=username,
+                                                                password=password)
+        if validate_error_msg:
+            return self.validate_error_in_response(status, errors)
+        else:
+            if status != "success":
+                return False
+            else:
+                return True
+
+    def test_create_dataset_on_bucket(self):
+        # Create bucket on CBAS
+        self.create_bucket_on_cbas(cbas_bucket_name=self.cbas_bucket_name,
+                                   cb_bucket_name=self.cb_bucket_name,
+                                   cb_server_ip=self.cb_server_ip)
+
+        # Create dataset on the CBAS bucket
+        result = self.create_dataset_on_bucket(
+            cbas_bucket_name=self.cbas_bucket_name_invalid,
+            cbas_dataset_name=self.cbas_dataset_name,
+            validate_error_msg=self.validate_error)
+        if not result:
+            self.fail("FAIL : Actual error msg does not match the expected")
