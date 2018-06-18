@@ -547,7 +547,7 @@ class SecretsMgmtUpgrade(NewUpgradeBaseTest):
                 temp = rest.cluster_status()
             self.log.info("current status of {0}  is {1}".format(server.ip, temp['nodes'][0]['status']))
     
-     def upgrade_all_nodes_post_463(self):
+    def upgrade_all_nodes_post_463(self):
         servers_in = self.servers[1:]
         self._install(self.servers)
         self.cluster.rebalance(self.servers, servers_in, [])
