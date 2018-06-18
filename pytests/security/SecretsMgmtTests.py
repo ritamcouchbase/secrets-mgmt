@@ -546,6 +546,32 @@ class SecretsMgmtUpgrade(NewUpgradeBaseTest):
                 self.sleep(5)
                 temp = rest.cluster_status()
             self.log.info("current status of {0}  is {1}".format(server.ip, temp['nodes'][0]['status']))
+    
+     def upgrade_all_nodes_post_463(self):
+        servers_in = self.servers[1:]
+        self._install(self.servers)
+        self.cluster.rebalance(self.servers, servers_in, [])
+        
+        for server in self.servers:
+            self.secretmgmt_base_obj.setup_pass_node(server, self.password)
+            self.secretmgmt_base_obj.restart_server_with_env(self.master, self.password)
+            temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Initialization")
+            self.assertTrue(temp_result, "Babysitter.log does not contain node initialization code")
+
+        upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
+        for threads in upgrade_threads:
+            threads.join()
+        
+        for server in self.servers:
+            rest = RestConnection(server)
+            temp = rest.cluster_status()
+            self.log.info("Initial status of {0} cluster is {1}".format(server.ip, temp['nodes'][0]['status']))
+            while (temp['nodes'][0]['status'] == 'warmup'):
+                self.log.info("Waiting for cluster to become healthy")
+                self.sleep(5)
+                temp = rest.cluster_status()
+            self.log.info("current status of {0}  is {1}".format(server.ip, temp['nodes'][0]['status']))
+
 
     def upgrade_half_nodes(self):
         serv_upgrade = self.servers[2:4]
