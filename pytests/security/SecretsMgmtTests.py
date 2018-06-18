@@ -534,7 +534,7 @@ class SecretsMgmtUpgrade(NewUpgradeBaseTest):
         for server in self.servers:
             self.secretmgmt_base_obj.setup_pass_node(server, self.password)
             self.secretmgmt_base_obj.restart_server_with_env(self.master, self.password)
-            temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Initialization")
+            temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Booted")
             self.assertTrue(temp_result, "Babysitter.log does not contain node initialization code")
 
         for server in self.servers:
@@ -555,7 +555,7 @@ class SecretsMgmtUpgrade(NewUpgradeBaseTest):
         for server in self.servers:
             self.secretmgmt_base_obj.setup_pass_node(server, self.password)
             self.secretmgmt_base_obj.restart_server_with_env(self.master, self.password)
-            temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Initialization")
+            temp_result = self.secretmgmt_base_obj.check_log_files(self.master, "/babysitter.log", "Booted")
             self.assertTrue(temp_result, "Babysitter.log does not contain node initialization code")
 
         upgrade_threads = self._async_update(upgrade_version=self.upgrade_version, servers=self.servers)
