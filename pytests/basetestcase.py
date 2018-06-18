@@ -425,6 +425,8 @@ class BaseTestCase(unittest.TestCase):
 
                 self.log.info("==============  basetestcase cleanup was started for test #{0} {1} ==============" \
                               .format(self.case_number, self._testMethodName))
+                if self.enable_secrets:
+                    self._setup_node_secret("")
                 rest = RestConnection(self.master)
                 alerts = rest.get_alerts()
                 if self.force_kill_memcached:
