@@ -2608,7 +2608,7 @@ class BaseTestCase(unittest.TestCase):
             "ifconfig eth0 | grep 'inet addr:' | cut -d: -f2 |awk '{print $1}'")
         return ipAddress
     
-     def enable_diag_eval_on_non_local_hosts(self):
+    def enable_diag_eval_on_non_local_hosts(self):
         """
         Enable diag/eval to be run on non-local hosts.
         :return:
