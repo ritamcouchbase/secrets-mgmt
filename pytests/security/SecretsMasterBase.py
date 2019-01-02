@@ -418,7 +418,7 @@ class SecretsMasterBase():
             shell.stop_server()
             self.start_server_prompt_diff_window(host)
             time.sleep(10)
-            cmd = "/opt/couchbase/bin/couchbase-cli master-password -c localhost:8091 -u Administrator -p password --send-password"
+            cmd = "/opt/couchbase/bin/couchbase-cli master-password --send-password"
             self.incorrect_password(host, cmd=cmd, retries_number=1, input_correct_pass=True, correct_pass=password)
         elif startup_type == 'simple':
             shell.stop_server()
