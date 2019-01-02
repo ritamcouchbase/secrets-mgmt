@@ -40,6 +40,7 @@ class SecretsMgmtTests(BaseTestCase):
         for server in self.servers:
             self.secretmgmt_base_obj = SecretsMasterBase(server)
             self.secretmgmt_base_obj.set_password(server, "")
+            self.secretmgmt_base_obj.change_config_to_orginal(server, "")
             log_dir = (self.secretmgmt_base_obj.get_log_dir(server))[1:-1]
             babysitter_file = str(log_dir + "/babysitter.log")
             shell = RemoteMachineShellConnection(server)

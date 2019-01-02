@@ -171,10 +171,18 @@ class SecretsMasterBase():
             log.info(" PASSWORD WORD not found in config.dat file")
             return True
 
+    def change_config_to_orginal(self,host,password):
+        shell = RemoteMachineShellConnection(host)
+        shell.execute_command("sed -i 's/export CB_MASTER_PASSWORD=*//' /opt/couchbase/bin/couchbase-server")
+        #shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; service couchbase-server restart")
+        shell.execute_command("service couchbase-server restart")
+        
 
     def restart_server_with_env(self,host,password):
         shell = RemoteMachineShellConnection(host)
-        shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; service couchbase-server restart")
+        shell.execute_command("sed -i 's/export PATH/export PATH\\nexport CB_MASTER_PASSWORD='" + password + "'/' /opt/couchbase/bin/couchbase-server")
+        #shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; service couchbase-server restart")
+        shell.execute_command("service couchbase-server restart")
 
 
     def correct_password_on_prompt(self,host,password,cmd):
