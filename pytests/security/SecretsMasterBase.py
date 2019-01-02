@@ -174,7 +174,7 @@ class SecretsMasterBase():
 
     def restart_server_with_env(self,host,password):
         shell = RemoteMachineShellConnection(host)
-        shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; /etc/init.d/couchbase-server restart")
+        shell.execute_command("export CB_MASTER_PASSWORD="+ password + "; service couchbase-server restart")
 
 
     def correct_password_on_prompt(self,host,password,cmd):
@@ -254,7 +254,7 @@ class SecretsMasterBase():
 
     def start_server_prompt_diff_window(self,host):
         shell = RemoteMachineShellConnection(host)
-        shell.execute_command("export CB_WAIT_FOR_MASTER_PASSWORD=true; /opt/couchbase/etc/couchbase_init.d start")
+        shell.execute_command("export CB_WAIT_FOR_MASTER_PASSWORD=true; service couchbase-server restart")
         shell.disconnect()
 
 
